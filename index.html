@@ -143,7 +143,9 @@
   const PLAYER_X_FRAC = 0.22;         // fixed horizontal position, fraction of W
   const PLAYER_STAND_W = 40, PLAYER_STAND_H = 42;
   const PLAYER_DUCK_W = 50, PLAYER_DUCK_H = 24;
-  const HITBOX_SHRINK = 0.85;         // hitboxes 15% smaller than visuals (fairness)
+  // v1.3: no more arbitrary shrink factor — hitboxes are computed pixel-perfect
+  // directly from each sprite's drawn matrix (see spriteHitbox()).
+  const DEBUG_HITBOXES = true; // TEMP — draws neon-green hitbox outlines for playtesting
 
   const SPAWN_BASE_INTERVAL = 1.65;
   const SPAWN_MIN_INTERVAL = 0.68;
@@ -208,12 +210,23 @@
   const SPIKE_W_BASE = SPIKE_REF[0].length * PIXEL_UNIT_BASE;   // 40
   const SPIKE_H_BASE = SPIKE_REF.length * PIXEL_UNIT_BASE;      // 30
   const BIRD_W_BASE  = BIRD_REF[0].length * PIXEL_UNIT_BASE;    // 80  (visual width)
-  const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height, drawn at base of hitbox)
-  const OVERHEAD_BOTTOM_OFFSET_BASE = 33; // between duck-top(24) and stand-top(42)
-  const LONG_WALL_TOTAL_H_BASE = 200; // long_wall keeps a tall hitbox — duck is its only valid response (v1.2)
-  const LONG_WALL_CROSS_TIME = 0.55;  // seconds to fully slide past the player's X (v1.2)
+  const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height)
+  // v1.3: bird lowered to sit right at the standing player's head/upper-torso
+  // line (walking in = death; duck or jump clears it pixel-perfectly).
+  const BIRD_BOTTOM_OFFSET_BASE = 30;
+  const LONG_WALL_TOTAL_H_BASE = 200; // long_wall keeps a tall hitbox — duck is its only valid response
+  const LONG_WALL_BOTTOM_OFFSET_BASE = 33;
+  const LONG_WALL_CROSS_TIME = 0.55;  // seconds to fully slide past the player's X
 
-  // Draws a ref matrix into a target box. tileX/tileY: repeat (modulo) instead of stretch-sample.
+  // Same sampling rule used for both drawing AND hitboxing, so the two can
+  // never drift apart. tileX/tileY: repeat (modulo) instead of stretch-sample.
+  function sampleRefCell(ref, refRows, refCols, r, c, rows, cols, tileX, tileY) {
+    const rr = tileY ? (r % refRows) : Math.min(refRows - 1, Math.floor(r * refRows / rows));
+    const cc = tileX ? (c % refCols) : Math.min(refCols - 1, Math.floor(c * refCols / cols));
+    return ref[rr][cc];
+  }
+
+  // Draws a ref matrix into a target box.
   function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY) {
     const refRows = ref.length, refCols = ref[0].length;
     const cols = Math.max(1, Math.round(w / unit));
@@ -221,10 +234,8 @@
     const cw = w / cols, ch = h / rows;
     const op = outlinePx();
     for (let r = 0; r < rows; r++) {
-      const rr = tileY ? (r % refRows) : Math.min(refRows - 1, Math.floor(r * refRows / rows));
       for (let c = 0; c < cols; c++) {
-        const cc = tileX ? (c % refCols) : Math.min(refCols - 1, Math.floor(c * refCols / cols));
-        const code = ref[rr][cc];
+        const code = sampleRefCell(ref, refRows, refCols, r, c, rows, cols, tileX, tileY);
         if (!code) continue;
         const px = x + c * cw, py = y + r * ch;
         ctx2.fillStyle = '#000';
@@ -234,6 +245,44 @@
       }
     }
   }
+
+  // PIXEL-PERFECT HITBOX (v1.3): scans the exact same sampled grid used for
+  // drawing and returns the tight AABB (real px) around the outermost drawn
+  // pixels — mathematically tied to SCALE + PIXEL_UNIT_BASE, no fudge factor.
+  function spriteHitbox(ref, x, y, w, h, unit, tileX, tileY) {
+    const refRows = ref.length, refCols = ref[0].length;
+    const cols = Math.max(1, Math.round(w / unit));
+    const rows = Math.max(1, Math.round(h / unit));
+    const cw = w / cols, ch = h / rows;
+    let minR = rows, maxR = -1, minC = cols, maxC = -1;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (sampleRefCell(ref, refRows, refCols, r, c, rows, cols, tileX, tileY)) {
+          if (r < minR) minR = r;
+          if (r > maxR) maxR = r;
+          if (c < minC) minC = c;
+          if (c > maxC) maxC = c;
+        }
+      }
+    }
+    if (maxR < 0) return { x, y, w: 0, h: 0 }; // fully empty sprite — no hitbox
+    return {
+      x: x + minC * cw,
+      y: y + minR * ch,
+      w: (maxC - minC + 1) * cw,
+      h: (maxR - minR + 1) * ch
+    };
+  }
+
+  // Single source of truth: which ref/palette/tiling each obstacle type draws
+  // with — obstacleHitbox() and drawObstacles() both read from this table so
+  // the visible sprite and its collision box can never fall out of sync.
+  const OBSTACLE_SPRITES = {
+    spike:     { ref: SPIKE_REF,     palette: GROUND_PALETTE, tileX: false, tileY: false },
+    lava:      { ref: LAVA_TILE_REF, palette: GROUND_PALETTE, tileX: true,  tileY: false },
+    bird:      { ref: BIRD_REF,      palette: SKY_PALETTE,    tileX: false, tileY: false },
+    long_wall: { ref: WALL_TILE_REF, palette: SKY_PALETTE,    tileX: true,  tileY: true }
+  };
 
   const RIP_PHRASES = [
     "You almost got it by 0.01 seconds! Try again!",
@@ -464,20 +513,21 @@
       const h = 24 * s;
       obstacles.push({ type: 'lava', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.80) {
-      // BLUE BIRD — real choice: Swipe Down to duck under it, or Swipe Up to
-      // jump clean over it. Hitbox now matches its actual 16x8 sprite bounds —
-      // no invisible tall extension (v1.2 "chill fix").
+      // BLUE BIRD (v1.3) — lowered to the player's head/upper-torso line.
+      // Pixel-perfect hitbox trims its empty bottom padding row automatically
+      // (see spriteHitbox), so walking straight in = death; duck or jump clears.
       const w = BIRD_W_BASE * s;
       const h = BIRD_VIS_H_BASE * s;
-      const bottomOffset = OVERHEAD_BOTTOM_OFFSET_BASE * s;
+      const bottomOffset = BIRD_BOTTOM_OFFSET_BASE * s;
       obstacles.push({ type: 'bird', x: W + w, w, top: groundY - bottomOffset - h, h });
     } else {
-      // BLUE LONG WALL — duck only (tall hitbox retained). Width is sized so it
-      // takes exactly LONG_WALL_CROSS_TIME seconds to slide past the player's X —
-      // 0.05s longer than the 0.5s duck, so a late duck still gets caught standing.
+      // BLUE LONG WALL — duck only (tall hitbox retained, jump can never clear
+      // it). Width is sized so it takes exactly LONG_WALL_CROSS_TIME seconds to
+      // slide past the player's X — 0.05s longer than the 0.5s duck, so
+      // standing/jumping back up early still overlaps and dies.
       const w = SCROLL_SPEED_BASE * s * LONG_WALL_CROSS_TIME;
       const totalH = LONG_WALL_TOTAL_H_BASE * s;
-      const bottomOffset = OVERHEAD_BOTTOM_OFFSET_BASE * s;
+      const bottomOffset = LONG_WALL_BOTTOM_OFFSET_BASE * s;
       obstacles.push({ type: 'long_wall', x: W + w, w, top: groundY - bottomOffset - totalH, h: totalH });
     }
   }
@@ -489,35 +539,29 @@
   // ---------------------------------------------------------------------
   // COLLISION
   // ---------------------------------------------------------------------
+  // v1.3: exact drawn bounds, no shrink — matches the rounded-rect body drawn
+  // in drawPlayer() at PLAYER_STAND_W/H or PLAYER_DUCK_W/H, scaled by SCALE.
+  // (Transient landing "squish" is cosmetic only and intentionally excluded
+  // so the hitbox never wobbles mid-collision.)
   function playerHitbox() {
     const groundY = H - BANNER_H;
     const cx = W * PLAYER_X_FRAC;
-    let w, h;
-    if (player.ducking) { w = PLAYER_DUCK_W * SCALE; h = PLAYER_DUCK_H * SCALE; }
-    else { w = PLAYER_STAND_W * SCALE; h = PLAYER_STAND_H * SCALE; }
+    const w = (player.ducking ? PLAYER_DUCK_W : PLAYER_STAND_W) * SCALE;
+    const h = (player.ducking ? PLAYER_DUCK_H : PLAYER_STAND_H) * SCALE;
     const bottom = groundY + player.y; // player.y is <=0 when airborne
-    const shrinkW = w * HITBOX_SHRINK, shrinkH = h * HITBOX_SHRINK;
-    return {
-      x: cx - shrinkW / 2,
-      y: bottom - shrinkH,
-      w: shrinkW,
-      h: shrinkH
-    };
+    return { x: cx - w / 2, y: bottom - h, w, h };
   }
 
   function rectsOverlap(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   }
 
+  // v1.3: pixel-perfect — reads the obstacle's own sprite definition and
+  // scans its actually-drawn pixels (see spriteHitbox()) instead of applying
+  // an arbitrary shrink percentage.
   function obstacleHitbox(o) {
-    const shrink = HITBOX_SHRINK;
-    const h = o.h * shrink;
-    const w = o.w * shrink;
-    return {
-      x: o.x + (o.w - w) / 2,
-      y: o.top + (o.h - h) / 2,
-      w, h
-    };
+    const def = OBSTACLE_SPRITES[o.type];
+    return spriteHitbox(def.ref, o.x, o.top, o.w, o.h, pixelUnit(), def.tileX, def.tileY);
   }
 
   // ---------------------------------------------------------------------
@@ -655,19 +699,27 @@
   function drawObstacles() {
     const unit = pixelUnit();
     for (const o of obstacles) {
-      if (o.type === 'spike') {
-        drawSpriteGrid(ctx, SPIKE_REF, GROUND_PALETTE, o.x, o.top, o.w, o.h, unit, false, false);
-      } else if (o.type === 'lava') {
-        // tileX repeats the flame unit twice across the doubled width
-        drawSpriteGrid(ctx, LAVA_TILE_REF, GROUND_PALETTE, o.x, o.top, o.w, o.h, unit, true, false);
-      } else if (o.type === 'bird') {
-        // hitbox now equals the sprite's own bounds — drawn straight into o.top/o.h
-        drawSpriteGrid(ctx, BIRD_REF, SKY_PALETTE, o.x, o.top, o.w, o.h, unit, false, false);
-      } else if (o.type === 'long_wall') {
-        // brick unit tiled both axes — reads as one continuous hanging wall
-        drawSpriteGrid(ctx, WALL_TILE_REF, SKY_PALETTE, o.x, o.top, o.w, o.h, unit, true, true);
-      }
+      const def = OBSTACLE_SPRITES[o.type];
+      drawSpriteGrid(ctx, def.ref, def.palette, o.x, o.top, o.w, o.h, unit, def.tileX, def.tileY);
     }
+  }
+
+  // TEMPORARY (v1.3) — neon-green outline of every live hitbox, computed via
+  // the exact same playerHitbox()/obstacleHitbox() the collision loop uses,
+  // so what you see is what actually kills you. Flip DEBUG_HITBOXES off above
+  // once verified.
+  function drawDebugHitboxes() {
+    if (!DEBUG_HITBOXES) return;
+    ctx.save();
+    ctx.strokeStyle = '#39ff14';
+    ctx.lineWidth = Math.max(1, 1 * SCALE);
+    const pBox = playerHitbox();
+    ctx.strokeRect(pBox.x, pBox.y, pBox.w, pBox.h);
+    for (const o of obstacles) {
+      const oBox = obstacleHitbox(o);
+      ctx.strokeRect(oBox.x, oBox.y, oBox.w, oBox.h);
+    }
+    ctx.restore();
   }
 
   function drawPlayer() {
@@ -833,6 +885,7 @@
     drawObstacles();
     drawParticles();
     if (state !== 'dead') drawPlayer();
+    if (state !== 'ready') drawDebugHitboxes();
     drawScoreUI();
     drawBanner();
     if (state === 'ready') drawReadyScreen();
