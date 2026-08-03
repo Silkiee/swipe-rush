@@ -138,7 +138,7 @@
   const SCROLL_SPEED_BASE = 260;      // px/s at SCALE=1 — LOCKED, never increases
   const GRAVITY = 2100;
   const JUMP_VELOCITY = -760;
-  const DUCK_DURATION = 0.48;         // seconds
+  const DUCK_DURATION = 0.5;          // seconds — locked to 30 frames @ 60fps (v1.2)
 
   const PLAYER_X_FRAC = 0.22;         // fixed horizontal position, fraction of W
   const PLAYER_STAND_W = 40, PLAYER_STAND_H = 42;
@@ -209,8 +209,9 @@
   const SPIKE_H_BASE = SPIKE_REF.length * PIXEL_UNIT_BASE;      // 30
   const BIRD_W_BASE  = BIRD_REF[0].length * PIXEL_UNIT_BASE;    // 80  (visual width)
   const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height, drawn at base of hitbox)
-  const OVERHEAD_TOTAL_H_BASE = 200;  // tall invisible hitbox extension so jump can never clear it — must duck
   const OVERHEAD_BOTTOM_OFFSET_BASE = 33; // between duck-top(24) and stand-top(42)
+  const LONG_WALL_TOTAL_H_BASE = 200; // long_wall keeps a tall hitbox — duck is its only valid response (v1.2)
+  const LONG_WALL_CROSS_TIME = 0.55;  // seconds to fully slide past the player's X (v1.2)
 
   // Draws a ref matrix into a target box. tileX/tileY: repeat (modulo) instead of stretch-sample.
   function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY) {
@@ -457,23 +458,25 @@
       const w = SPIKE_W_BASE * s, h = SPIKE_H_BASE * s;
       obstacles.push({ type: 'spike', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.55) {
-      // ORANGE LAVA — swipe up, timed closer to the peak of the jump.
-      // Width is exactly double the spike; height is clamped to 70% of max jump height.
+      // ORANGE LAVA — swipe up. Height is now a locked, static value (v1.2) —
+      // no jump-height math, always the same predictable shape.
       const w = SPIKE_W_BASE * 2 * s;
-      const h = maxJumpHeight() * 0.7;
+      const h = 24 * s;
       obstacles.push({ type: 'lava', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.80) {
-      // BLUE BIRD — swipe down (duck). Hitbox extends well above the visible
-      // sprite so a jump can never clear it — duck is the only valid response.
+      // BLUE BIRD — real choice: Swipe Down to duck under it, or Swipe Up to
+      // jump clean over it. Hitbox now matches its actual 16x8 sprite bounds —
+      // no invisible tall extension (v1.2 "chill fix").
       const w = BIRD_W_BASE * s;
-      const totalH = OVERHEAD_TOTAL_H_BASE * s;
+      const h = BIRD_VIS_H_BASE * s;
       const bottomOffset = OVERHEAD_BOTTOM_OFFSET_BASE * s;
-      obstacles.push({ type: 'bird', x: W + w, w, top: groundY - bottomOffset - totalH, h: totalH });
+      obstacles.push({ type: 'bird', x: W + w, w, top: groundY - bottomOffset - h, h });
     } else {
-      // BLUE LONG WALL — timed swipe down to slide under.
-      // Width is exactly double the bird; same duck mechanic, longer commitment window.
-      const w = BIRD_W_BASE * 2 * s;
-      const totalH = OVERHEAD_TOTAL_H_BASE * s;
+      // BLUE LONG WALL — duck only (tall hitbox retained). Width is sized so it
+      // takes exactly LONG_WALL_CROSS_TIME seconds to slide past the player's X —
+      // 0.05s longer than the 0.5s duck, so a late duck still gets caught standing.
+      const w = SCROLL_SPEED_BASE * s * LONG_WALL_CROSS_TIME;
+      const totalH = LONG_WALL_TOTAL_H_BASE * s;
       const bottomOffset = OVERHEAD_BOTTOM_OFFSET_BASE * s;
       obstacles.push({ type: 'long_wall', x: W + w, w, top: groundY - bottomOffset - totalH, h: totalH });
     }
@@ -658,11 +661,8 @@
         // tileX repeats the flame unit twice across the doubled width
         drawSpriteGrid(ctx, LAVA_TILE_REF, GROUND_PALETTE, o.x, o.top, o.w, o.h, unit, true, false);
       } else if (o.type === 'bird') {
-        // only draw the creature within its natural proportions, bottom-aligned
-        // in the tall (mostly invisible) hitbox column
-        const visH = BIRD_VIS_H_BASE * SCALE;
-        const visY = o.top + o.h - visH;
-        drawSpriteGrid(ctx, BIRD_REF, SKY_PALETTE, o.x, visY, o.w, visH, unit, false, false);
+        // hitbox now equals the sprite's own bounds — drawn straight into o.top/o.h
+        drawSpriteGrid(ctx, BIRD_REF, SKY_PALETTE, o.x, o.top, o.w, o.h, unit, false, false);
       } else if (o.type === 'long_wall') {
         // brick unit tiled both axes — reads as one continuous hanging wall
         drawSpriteGrid(ctx, WALL_TILE_REF, SKY_PALETTE, o.x, o.top, o.w, o.h, unit, true, true);
