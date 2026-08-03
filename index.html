@@ -151,6 +151,89 @@
 
   const SWIPE_THRESHOLD = 28;         // px at SCALE=1
 
+  // ---------------------------------------------------------------------
+  // PIXEL ART OBSTACLE SYSTEM (v1.1) — pure code, no image assets
+  // ---------------------------------------------------------------------
+  const PIXEL_UNIT_BASE = 5;          // size of one "chunky" retro pixel at SCALE=1
+  function pixelUnit() { return PIXEL_UNIT_BASE * SCALE; }
+  function outlinePx() { return Math.max(1, Math.round(1.4 * SCALE)); } // uniform black outline, shared by all 4 sprites
+  function maxJumpHeight() {
+    const v = Math.abs(JUMP_VELOCITY) * SCALE;
+    return (v * v) / (2 * GRAVITY * SCALE);
+  }
+
+  // Ground hazards: vibrant red/orange. Overhead hazards: electric blue.
+  const GROUND_PALETTE = { 1: '#ff5722', 2: '#ffb74d', 3: '#b71c1c' };
+  const SKY_PALETTE    = { 1: '#29b6f6', 2: '#81d4fa', 3: '#01579b' };
+
+  // 8x6 unit — floor spike silhouette
+  const SPIKE_REF = [
+    [0,0,0,1,1,0,0,0],
+    [0,0,1,2,2,1,0,0],
+    [0,1,1,2,2,1,1,0],
+    [1,1,1,2,2,1,1,1],
+    [1,1,1,1,1,1,1,1],
+    [3,3,3,3,3,3,3,3]
+  ];
+  // 8x6 unit — jagged flame; tiled x2 horizontally to build the double-width lava hazard
+  const LAVA_TILE_REF = [
+    [0,0,1,1,0,0,0,0],
+    [0,1,2,2,1,0,0,0],
+    [1,2,2,2,2,1,0,1],
+    [1,1,2,2,1,1,1,1],
+    [1,1,1,1,1,1,1,1],
+    [3,3,3,3,3,3,3,3]
+  ];
+  // 16x8 unit — flying bird silhouette (wings spread, small dark eye accents)
+  const BIRD_REF = [
+    [1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
+    [0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0],
+    [0,0,1,1,0,0,0,0,0,0,0,0,1,1,0,0],
+    [0,0,0,1,1,1,2,2,2,1,1,1,0,0,0,0],
+    [0,0,0,0,1,2,2,2,2,2,1,0,0,0,0,0],
+    [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
+    [0,0,0,0,0,0,3,0,3,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+  ];
+  // 8x6 unit — brick course; tiled both axes to build the long overhead wall
+  const WALL_TILE_REF = [
+    [3,1,1,1,3,1,1,1],
+    [3,1,2,1,3,1,2,1],
+    [3,3,3,3,3,3,3,3],
+    [1,1,3,1,1,1,3,1],
+    [1,2,3,1,2,3,1,2],
+    [3,3,3,3,3,3,3,3]
+  ];
+
+  const SPIKE_W_BASE = SPIKE_REF[0].length * PIXEL_UNIT_BASE;   // 40
+  const SPIKE_H_BASE = SPIKE_REF.length * PIXEL_UNIT_BASE;      // 30
+  const BIRD_W_BASE  = BIRD_REF[0].length * PIXEL_UNIT_BASE;    // 80  (visual width)
+  const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height, drawn at base of hitbox)
+  const OVERHEAD_TOTAL_H_BASE = 200;  // tall invisible hitbox extension so jump can never clear it — must duck
+  const OVERHEAD_BOTTOM_OFFSET_BASE = 33; // between duck-top(24) and stand-top(42)
+
+  // Draws a ref matrix into a target box. tileX/tileY: repeat (modulo) instead of stretch-sample.
+  function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY) {
+    const refRows = ref.length, refCols = ref[0].length;
+    const cols = Math.max(1, Math.round(w / unit));
+    const rows = Math.max(1, Math.round(h / unit));
+    const cw = w / cols, ch = h / rows;
+    const op = outlinePx();
+    for (let r = 0; r < rows; r++) {
+      const rr = tileY ? (r % refRows) : Math.min(refRows - 1, Math.floor(r * refRows / rows));
+      for (let c = 0; c < cols; c++) {
+        const cc = tileX ? (c % refCols) : Math.min(refCols - 1, Math.floor(c * refCols / cols));
+        const code = ref[rr][cc];
+        if (!code) continue;
+        const px = x + c * cw, py = y + r * ch;
+        ctx2.fillStyle = '#000';
+        ctx2.fillRect(px, py, cw, ch);
+        ctx2.fillStyle = palette[code];
+        ctx2.fillRect(px + op, py + op, Math.max(1, cw - 2 * op), Math.max(1, ch - 2 * op));
+      }
+    }
+  }
+
   const RIP_PHRASES = [
     "You almost got it by 0.01 seconds! Try again!",
     "Your reflexes are warming up! One more try!",
@@ -369,32 +452,30 @@
     const roll = Math.random();
     const s = SCALE;
 
-    if (roll < 0.36) {
-      // RED FLOOR SPIKE — swipe up
-      const size = 30 * s;
-      obstacles.push({ type: 'spike', x: W + size, w: size, top: groundY - size, h: size });
-    } else if (roll < 0.68) {
-      // BLUE OVERHEAD BEAM — swipe down (duck)
-      const w = 46 * s;
-      const beamH = 200 * s;
-      const bottomOffset = 33 * s; // must be between duck-top(24s) and stand-top(42s)
-      obstacles.push({
-        type: 'beam', x: W + w, w,
-        top: groundY - bottomOffset - beamH,
-        h: beamH
-      });
+    if (roll < 0.30) {
+      // RED SPIKE — swipe up
+      const w = SPIKE_W_BASE * s, h = SPIKE_H_BASE * s;
+      obstacles.push({ type: 'spike', x: W + w, w, top: groundY - h, h });
+    } else if (roll < 0.55) {
+      // ORANGE LAVA — swipe up, timed closer to the peak of the jump.
+      // Width is exactly double the spike; height is clamped to 70% of max jump height.
+      const w = SPIKE_W_BASE * 2 * s;
+      const h = maxJumpHeight() * 0.7;
+      obstacles.push({ type: 'lava', x: W + w, w, top: groundY - h, h });
+    } else if (roll < 0.80) {
+      // BLUE BIRD — swipe down (duck). Hitbox extends well above the visible
+      // sprite so a jump can never clear it — duck is the only valid response.
+      const w = BIRD_W_BASE * s;
+      const totalH = OVERHEAD_TOTAL_H_BASE * s;
+      const bottomOffset = OVERHEAD_BOTTOM_OFFSET_BASE * s;
+      obstacles.push({ type: 'bird', x: W + w, w, top: groundY - bottomOffset - totalH, h: totalH });
     } else {
-      // GREEN MATRIX WALL — precision jump or duck
-      const w = 40 * s;
-      const gapTop = Math.random() < 0.5;
-      if (gapTop) {
-        const solidH = 150 * s;
-        obstacles.push({ type: 'wall', x: W + w, w, top: groundY - solidH, h: solidH, gap: 'top' });
-      } else {
-        const solidTop = TRACK_TOP;
-        const gapH = 34 * s;
-        obstacles.push({ type: 'wall', x: W + w, w, top: solidTop, h: (groundY - gapH) - solidTop, gap: 'bottom' });
-      }
+      // BLUE LONG WALL — timed swipe down to slide under.
+      // Width is exactly double the bird; same duck mechanic, longer commitment window.
+      const w = BIRD_W_BASE * 2 * s;
+      const totalH = OVERHEAD_TOTAL_H_BASE * s;
+      const bottomOffset = OVERHEAD_BOTTOM_OFFSET_BASE * s;
+      obstacles.push({ type: 'long_wall', x: W + w, w, top: groundY - bottomOffset - totalH, h: totalH });
     }
   }
 
@@ -569,28 +650,22 @@
   }
 
   function drawObstacles() {
+    const unit = pixelUnit();
     for (const o of obstacles) {
       if (o.type === 'spike') {
-        ctx.fillStyle = '#ff3b3b';
-        ctx.beginPath();
-        ctx.moveTo(o.x, o.top + o.h);
-        ctx.lineTo(o.x + o.w / 2, o.top);
-        ctx.lineTo(o.x + o.w, o.top + o.h);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#7a0000';
-        ctx.fillRect(o.x, o.top + o.h - 3 * SCALE, o.w, 3 * SCALE);
-      } else if (o.type === 'beam') {
-        ctx.fillStyle = '#3ba7ff';
-        ctx.fillRect(o.x, o.top, o.w, o.h);
-        ctx.fillStyle = '#1c5f96';
-        ctx.fillRect(o.x, o.top + o.h - 6 * SCALE, o.w, 6 * SCALE);
-      } else if (o.type === 'wall') {
-        ctx.fillStyle = '#3bff6e';
-        ctx.fillRect(o.x, o.top, o.w, o.h);
-        ctx.fillStyle = '#1c9a3f';
-        ctx.fillRect(o.x, o.top, 5 * SCALE, o.h);
-        ctx.fillRect(o.x + o.w - 5 * SCALE, o.top, 5 * SCALE, o.h);
+        drawSpriteGrid(ctx, SPIKE_REF, GROUND_PALETTE, o.x, o.top, o.w, o.h, unit, false, false);
+      } else if (o.type === 'lava') {
+        // tileX repeats the flame unit twice across the doubled width
+        drawSpriteGrid(ctx, LAVA_TILE_REF, GROUND_PALETTE, o.x, o.top, o.w, o.h, unit, true, false);
+      } else if (o.type === 'bird') {
+        // only draw the creature within its natural proportions, bottom-aligned
+        // in the tall (mostly invisible) hitbox column
+        const visH = BIRD_VIS_H_BASE * SCALE;
+        const visY = o.top + o.h - visH;
+        drawSpriteGrid(ctx, BIRD_REF, SKY_PALETTE, o.x, visY, o.w, visH, unit, false, false);
+      } else if (o.type === 'long_wall') {
+        // brick unit tiled both axes — reads as one continuous hanging wall
+        drawSpriteGrid(ctx, WALL_TILE_REF, SKY_PALETTE, o.x, o.top, o.w, o.h, unit, true, true);
       }
     }
   }
