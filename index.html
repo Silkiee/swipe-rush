@@ -138,7 +138,13 @@
   const SCROLL_SPEED_BASE = 260;      // px/s at SCALE=1 — LOCKED, never increases
   const GRAVITY = 2100;
   const JUMP_VELOCITY = -760;
-  const DUCK_DURATION = 0.5;          // seconds — locked to 30 frames @ 60fps (v1.2)
+  // v1.4: the real in-game "safe" window isn't just HAZARD_CROSS_TIME — the
+  // duck box (PLAYER_DUCK_W) has its own width, so the wall's leading edge
+  // reaches the player before the wall's x==playerX point, and its trailing
+  // edge clears after. True zero-margin duration = (wall + duck-box width) /
+  // scroll speed = (80 + 50) / 260 = 0.5s EXACTLY — i.e. the old 0.5s duck had
+  // zero safety margin, which is the early-stand-up bug. Extended a few frames.
+  const DUCK_DURATION = 0.6;          // seconds — 36 frames @ 60fps (was 0.5 / 30 frames)
 
   const PLAYER_X_FRAC = 0.22;         // fixed horizontal position, fraction of W
   const PLAYER_STAND_W = 40, PLAYER_STAND_H = 42;
@@ -209,14 +215,21 @@
 
   const SPIKE_W_BASE = SPIKE_REF[0].length * PIXEL_UNIT_BASE;   // 40
   const SPIKE_H_BASE = SPIKE_REF.length * PIXEL_UNIT_BASE;      // 30
-  const BIRD_W_BASE  = BIRD_REF[0].length * PIXEL_UNIT_BASE;    // 80  (visual width)
   const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height)
+  // v1.4: UNIFIED X-AXIS METRIC — lava, bird, and long_wall all share this
+  // exact same horizontal width (double the spike's), instead of each hazard
+  // computing its own independent width (bird's old BIRD_W_BASE and long_wall's
+  // old timing-derived width are both superseded by this single constant).
+  const HAZARD_DOUBLE_W_BASE = SPIKE_W_BASE * 2; // 80
   // v1.3: bird lowered to sit right at the standing player's head/upper-torso
   // line (walking in = death; duck or jump clears it pixel-perfectly).
   const BIRD_BOTTOM_OFFSET_BASE = 30;
   const LONG_WALL_TOTAL_H_BASE = 200; // long_wall keeps a tall hitbox — duck is its only valid response
   const LONG_WALL_BOTTOM_OFFSET_BASE = 33;
-  const LONG_WALL_CROSS_TIME = 0.55;  // seconds to fully slide past the player's X
+  // v1.4: cross time is now DERIVED from the unified width (previously the
+  // width was derived from a fixed cross time) — kept only to verify the duck
+  // duration below still safely covers it.
+  const HAZARD_CROSS_TIME = HAZARD_DOUBLE_W_BASE / SCROLL_SPEED_BASE; // ≈0.308s
 
   // Same sampling rule used for both drawing AND hitboxing, so the two can
   // never drift apart. tileX/tileY: repeat (modulo) instead of stretch-sample.
@@ -507,25 +520,28 @@
       const w = SPIKE_W_BASE * s, h = SPIKE_H_BASE * s;
       obstacles.push({ type: 'spike', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.55) {
-      // ORANGE LAVA — swipe up. Height is now a locked, static value (v1.2) —
-      // no jump-height math, always the same predictable shape.
-      const w = SPIKE_W_BASE * 2 * s;
+      // ORANGE LAVA — swipe up. Height is a locked, static value; width is the
+      // unified hazard width (v1.4).
+      const w = HAZARD_DOUBLE_W_BASE * s;
       const h = 24 * s;
       obstacles.push({ type: 'lava', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.80) {
-      // BLUE BIRD (v1.3) — lowered to the player's head/upper-torso line.
-      // Pixel-perfect hitbox trims its empty bottom padding row automatically
-      // (see spriteHitbox), so walking straight in = death; duck or jump clears.
-      const w = BIRD_W_BASE * s;
+      // BLUE BIRD — lowered to the player's head/upper-torso line. Width is
+      // now the same unified hazard width as lava/long_wall (v1.4); the sprite
+      // stretch-samples cleanly to fill it (see drawObstacles). Pixel-perfect
+      // hitbox trims its empty bottom padding row automatically, so walking
+      // straight in = death; duck or jump clears.
+      const w = HAZARD_DOUBLE_W_BASE * s;
       const h = BIRD_VIS_H_BASE * s;
       const bottomOffset = BIRD_BOTTOM_OFFSET_BASE * s;
       obstacles.push({ type: 'bird', x: W + w, w, top: groundY - bottomOffset - h, h });
     } else {
       // BLUE LONG WALL — duck only (tall hitbox retained, jump can never clear
-      // it). Width is sized so it takes exactly LONG_WALL_CROSS_TIME seconds to
-      // slide past the player's X — 0.05s longer than the 0.5s duck, so
-      // standing/jumping back up early still overlaps and dies.
-      const w = SCROLL_SPEED_BASE * s * LONG_WALL_CROSS_TIME;
+      // it). Width is now the same unified hazard width as lava/bird (v1.4) —
+      // exactly 2 brick tiles, no partial tile at the edge. DUCK_DURATION above
+      // is verified to safely exceed HAZARD_CROSS_TIME plus the duck box's own
+      // width, so standing/jumping back up early still overlaps and dies.
+      const w = HAZARD_DOUBLE_W_BASE * s;
       const totalH = LONG_WALL_TOTAL_H_BASE * s;
       const bottomOffset = LONG_WALL_BOTTOM_OFFSET_BASE * s;
       obstacles.push({ type: 'long_wall', x: W + w, w, top: groundY - bottomOffset - totalH, h: totalH });
