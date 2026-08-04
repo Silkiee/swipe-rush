@@ -213,6 +213,41 @@
     [3,3,3,3,3,3,3,3]
   ];
 
+  // -----------------------------------------------------------------
+  // v1.5 — PARALLAX BACKDROP: pixel grass/dirt ground + pixel cloud sky
+  // -----------------------------------------------------------------
+  const GRASS_UNIT_BASE = 4;  // chunky pixel size for the ground texture
+  const CLOUD_UNIT_BASE = 6;  // chunky pixel size for the cloud texture
+  const CLOUD_SPEED_FACTOR = 0.10; // clouds move at 10% of the game scroll speed
+  const SKY_COLOR = '#8fd3f0';
+
+  // 8-wide x 6-tall repeating ground tile (tiles seamlessly on X).
+  // Rows are ordered dirt -> grass so that the LAST row (solid, code 1) is the
+  // one drawn immediately against GROUND_Y — this guarantees an unbroken,
+  // gap-free contact line under the character's feet every column, satisfying
+  // the "never hover / never sink" rule regardless of tile phase.
+  const GRASS_TILE_REF = [
+    [5,4,4,5,4,4,5,4],   // deep dirt shadow
+    [4,3,4,4,3,4,4,3],   // dirt mid
+    [3,3,4,3,3,4,3,3],   // dirt light w/ pebble fleck
+    [2,1,2,2,1,2,2,1],   // grass blade texture (decorative, not the contact row)
+    [1,1,1,1,1,1,1,1],   // solid grass
+    [1,1,1,1,1,1,1,1]    // solid grass — exact contact row, touches GROUND_Y
+  ];
+  const GRASS_PALETTE = { 1: '#8bc34a', 2: '#5d8a34', 3: '#8a6642', 4: '#6b4a30', 5: '#4a331f' };
+
+  // 6-tall x 32-wide cloud tile: one big puff cluster + one small puff
+  // cluster with an empty gap, so it tiles horizontally with natural spacing.
+  const CLOUD_TILE_REF = [
+    [0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0],
+    [0,0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1],
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1],
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+  ];
+  const CLOUD_PALETTE = { 1: '#ffffff' };
+
   const SPIKE_W_BASE = SPIKE_REF[0].length * PIXEL_UNIT_BASE;   // 40
   const SPIKE_H_BASE = SPIKE_REF.length * PIXEL_UNIT_BASE;      // 30
   const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height)
@@ -239,8 +274,11 @@
     return ref[rr][cc];
   }
 
-  // Draws a ref matrix into a target box.
-  function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY) {
+  // Draws a ref matrix into a target box. noOutline (v1.5, optional, default
+  // false) skips the per-pixel black border — used by the new grass/cloud
+  // backdrop layers so they read as smooth continuous texture rather than the
+  // gridded-icon look obstacles use; existing obstacle callers are unaffected.
+  function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY, noOutline) {
     const refRows = ref.length, refCols = ref[0].length;
     const cols = Math.max(1, Math.round(w / unit));
     const rows = Math.max(1, Math.round(h / unit));
@@ -251,10 +289,15 @@
         const code = sampleRefCell(ref, refRows, refCols, r, c, rows, cols, tileX, tileY);
         if (!code) continue;
         const px = x + c * cw, py = y + r * ch;
-        ctx2.fillStyle = '#000';
-        ctx2.fillRect(px, py, cw, ch);
-        ctx2.fillStyle = palette[code];
-        ctx2.fillRect(px + op, py + op, Math.max(1, cw - 2 * op), Math.max(1, ch - 2 * op));
+        if (noOutline) {
+          ctx2.fillStyle = palette[code];
+          ctx2.fillRect(px, py, cw, ch);
+        } else {
+          ctx2.fillStyle = '#000';
+          ctx2.fillRect(px, py, cw, ch);
+          ctx2.fillStyle = palette[code];
+          ctx2.fillRect(px + op, py + op, Math.max(1, cw - 2 * op), Math.max(1, ch - 2 * op));
+        }
       }
     }
   }
@@ -313,7 +356,7 @@
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0; } catch (e) { highScore = 0; }
 
-  let player, obstacles, particles, score, scoreTimer, spawnTimer, beatHighScoreThisRun, flashTimer, ripPhrase, tryAgainRect, groundScrollX, blinkTimer, blinkOn, stepPhase;
+  let player, obstacles, particles, score, scoreTimer, spawnTimer, beatHighScoreThisRun, flashTimer, ripPhrase, tryAgainRect, groundScrollX, cloudScrollX, blinkTimer, blinkOn, stepPhase;
 
   function resetPlayer() {
     player = {
@@ -336,6 +379,7 @@
     beatHighScoreThisRun = false;
     flashTimer = 0;
     groundScrollX = 0;
+    cloudScrollX = 0;
     blinkTimer = 2 + Math.random() * 2;
     blinkOn = false;
     stepPhase = 0;
@@ -600,6 +644,11 @@
     groundScrollX -= SCROLL_SPEED_BASE * SCALE * dt;
     if (groundScrollX < -40 * SCALE) groundScrollX += 40 * SCALE;
 
+    // v1.5: background cloud layer scrolls at 10% of the ground/obstacle
+    // speed for the parallax depth illusion — always runs (ready/dead too),
+    // same as groundScrollX above.
+    cloudScrollX -= SCROLL_SPEED_BASE * SCALE * CLOUD_SPEED_FACTOR * dt;
+
     blinkTimer -= dt;
     if (blinkTimer <= 0) {
       blinkOn = !blinkOn;
@@ -667,35 +716,39 @@
   // ---------------------------------------------------------------------
   // DRAW
   // ---------------------------------------------------------------------
+  // v1.5: sky-blue backdrop + slow parallax pixel-cloud layer (10% speed),
+  // replaces the old dark bg + arcade grid.
   function drawBackground() {
-    ctx.fillStyle = '#050507';
-    ctx.fillRect(0, 0, W, H);
-    // faint arcade grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-    ctx.lineWidth = 1;
-    const step = 28 * SCALE;
-    for (let x = 0; x < W; x += step) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H - BANNER_H); ctx.stroke();
-    }
-    for (let y = 0; y < H - BANNER_H; y += step) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    }
+    const skyH = H - BANNER_H;
+    ctx.fillStyle = SKY_COLOR;
+    ctx.fillRect(0, 0, W, skyH);
+
+    const unit = CLOUD_UNIT_BASE * SCALE;
+    const tileW = CLOUD_TILE_REF[0].length * unit;
+    const bandH = CLOUD_TILE_REF.length * unit;
+    const cloudTop = skyH * 0.08;
+    const offset = ((cloudScrollX % tileW) + tileW) % tileW;
+    const drawW = W + tileW * 2;
+    drawSpriteGrid(ctx, CLOUD_TILE_REF, CLOUD_PALETTE, offset - tileW, cloudTop, drawW, bandH, unit, true, false, true);
   }
 
+  // v1.5: foreground repeating grass/dirt pixel texture, scrolling at 100% of
+  // game speed (shares groundScrollX with the obstacle/ground scroll rate) so
+  // the character reads as anchored to the earth. The band is drawn directly
+  // ABOVE GROUND_Y (i.e. y in [groundY-bandH, groundY]) rather than below it,
+  // because the ad banner is painted immediately after this call and fully
+  // covers everything at y >= groundY — drawing downward would leave the
+  // whole texture invisible. The tile's solid bottom row lands EXACTLY on
+  // groundY, which is the same coordinate playerHitbox()/drawPlayer() use as
+  // the character's feet contact line, so there is no hover/sink gap.
   function drawGround() {
     const groundY = H - BANNER_H;
-    ctx.strokeStyle = '#3a3a42';
-    ctx.lineWidth = 3 * SCALE;
-    ctx.beginPath();
-    ctx.moveTo(0, groundY); ctx.lineTo(W, groundY); ctx.stroke();
-
-    ctx.strokeStyle = '#232328';
-    ctx.lineWidth = 2 * SCALE;
-    ctx.setLineDash([16 * SCALE, 14 * SCALE]);
-    ctx.lineDashOffset = groundScrollX;
-    ctx.beginPath();
-    ctx.moveTo(0, groundY + 6 * SCALE); ctx.lineTo(W, groundY + 6 * SCALE); ctx.stroke();
-    ctx.setLineDash([]);
+    const unit = GRASS_UNIT_BASE * SCALE;
+    const tileW = GRASS_TILE_REF[0].length * unit;
+    const bandH = GRASS_TILE_REF.length * unit;
+    const offset = ((groundScrollX % tileW) + tileW) % tileW;
+    const drawW = W + tileW * 2;
+    drawSpriteGrid(ctx, GRASS_TILE_REF, GRASS_PALETTE, offset - tileW, groundY - bandH, drawW, bandH, unit, true, false, true);
   }
 
   function drawBanner() {
