@@ -170,9 +170,22 @@
     return (v * v) / (2 * GRAVITY * SCALE);
   }
 
-  // Ground hazards: vibrant red/orange. Overhead hazards: electric blue.
+  // Ground hazards: vibrant red/orange (unchanged — already reads clearly
+  // against the grass/dirt foreground, no clash reported).
   const GROUND_PALETTE = { 1: '#ff5722', 2: '#ffb74d', 3: '#b71c1c' };
-  const SKY_PALETTE    = { 1: '#29b6f6', 2: '#81d4fa', 3: '#01579b' };
+  // v1.5.1: bird and long_wall used to share one electric-blue SKY_PALETTE,
+  // which is exactly what got lost against the new light-blue sky backdrop.
+  // Split into two dedicated high-contrast palettes, one per obstacle,
+  // recalibrated from the bird.png / wall.png reference art. Only hex values
+  // changed here — BIRD_REF/WALL_TILE_REF and all hitbox code are untouched.
+  const BIRD_PALETTE = { 1: '#242424', 2: '#f6f4ec', 3: '#f5a623' }; // 1=dark wingtip/wing edge, 2=white body, 3=orange eye/beak accent
+  // v1.5.3: renamed WALL_PALETTE -> BRICK_PALETTE, inverted toward vibrant
+  // orange as the dominant body color with mortar (code 3) as thin dark lines.
+  const BRICK_PALETTE = {
+    1: '#ff5722',  // Vibrant Retro Orange (the main brick bodies)
+    2: '#ffb74d',  // Lighter Accent Orange (brick texture shading)
+    3: '#1a1a1a'   // Deep Charcoal/Dark Gray (clean, thin mortar lines)
+  };
 
   // 8x6 unit — floor spike silhouette
   const SPIKE_REF = [
@@ -274,30 +287,22 @@
     return ref[rr][cc];
   }
 
-  // Draws a ref matrix into a target box. noOutline (v1.5, optional, default
-  // false) skips the per-pixel black border — used by the new grass/cloud
-  // backdrop layers so they read as smooth continuous texture rather than the
-  // gridded-icon look obstacles use; existing obstacle callers are unaffected.
-  function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY, noOutline) {
+  // Draws a ref matrix into a target box. v1.5.4: removed the per-pixel black
+  // outline entirely — every active cell now paints one flat, solid fillRect
+  // that fully fills its (cw x ch) slot, so adjacent colored pixels touch
+  // seamlessly with no gaps or gridding.
+  function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY) {
     const refRows = ref.length, refCols = ref[0].length;
     const cols = Math.max(1, Math.round(w / unit));
     const rows = Math.max(1, Math.round(h / unit));
     const cw = w / cols, ch = h / rows;
-    const op = outlinePx();
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const code = sampleRefCell(ref, refRows, refCols, r, c, rows, cols, tileX, tileY);
         if (!code) continue;
         const px = x + c * cw, py = y + r * ch;
-        if (noOutline) {
-          ctx2.fillStyle = palette[code];
-          ctx2.fillRect(px, py, cw, ch);
-        } else {
-          ctx2.fillStyle = '#000';
-          ctx2.fillRect(px, py, cw, ch);
-          ctx2.fillStyle = palette[code];
-          ctx2.fillRect(px + op, py + op, Math.max(1, cw - 2 * op), Math.max(1, ch - 2 * op));
-        }
+        ctx2.fillStyle = palette[code];
+        ctx2.fillRect(px, py, cw, ch);
       }
     }
   }
@@ -336,8 +341,8 @@
   const OBSTACLE_SPRITES = {
     spike:     { ref: SPIKE_REF,     palette: GROUND_PALETTE, tileX: false, tileY: false },
     lava:      { ref: LAVA_TILE_REF, palette: GROUND_PALETTE, tileX: true,  tileY: false },
-    bird:      { ref: BIRD_REF,      palette: SKY_PALETTE,    tileX: false, tileY: false },
-    long_wall: { ref: WALL_TILE_REF, palette: SKY_PALETTE,    tileX: true,  tileY: true }
+    bird:      { ref: BIRD_REF,      palette: BIRD_PALETTE,   tileX: false, tileY: false },
+    long_wall: { ref: WALL_TILE_REF, palette: BRICK_PALETTE, tileX: true,  tileY: true }
   };
 
   const RIP_PHRASES = [
