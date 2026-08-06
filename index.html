@@ -386,6 +386,8 @@
   let nicknameSubmitted = false;
   let leaderboardBtnRect = null;
   let backToMenuRect = null;
+  let submitBtnRect = null; // v1.6.1 — on-screen [ SUBMIT ] tap target (mobile fix)
+  let skipBtnRect = null;   // v1.6.2 — on-screen [ SKIP TO MENU ] tap target (mobile fix)
 
   function resetPlayer() {
     player = {
@@ -475,6 +477,24 @@
     state = 'LEADERBOARD_SCREEN';
   }
 
+  // v1.6.1 — shared trigger for the Enter key AND the on-screen [ SUBMIT ]
+  // tap button, so both paths lock out multi-submits identically.
+  function submitNicknameIfReady() {
+    if (state !== 'GAME_OVER' || nicknameSubmitted) return;
+    nicknameSubmitted = true;
+    const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
+    submitHighScore(finalName, score);
+  }
+
+  // v1.6.2 — shared trigger for the Esc key AND the on-screen [ SKIP TO MENU ]
+  // tap button: clears the in-progress nickname state and routes to START_MENU.
+  function skipToMenu() {
+    if (state !== 'GAME_OVER') return;
+    nicknameInput = '';
+    nicknameSubmitted = false;
+    state = 'START_MENU';
+  }
+
   // ---------------------------------------------------------------------
   // INPUT
   // ---------------------------------------------------------------------
@@ -552,7 +572,19 @@
       return;
     }
     if (state === 'GAME_OVER') {
-      return; // nickname entry is keyboard-driven (see keydown handler)
+      // v1.6.1 — mobile fix: tapping the on-screen [ SUBMIT ] button now
+      // triggers the exact same routine as pressing Enter.
+      if (pointInRect(endX, endY, submitBtnRect)) {
+        submitNicknameIfReady();
+        return;
+      }
+      // v1.6.2 — mobile fix: tapping the on-screen [ SKIP TO MENU ] button
+      // triggers the exact same routine as pressing Escape.
+      if (pointInRect(endX, endY, skipBtnRect)) {
+        skipToMenu();
+        return;
+      }
+      return;
     }
     if (state === 'playing') {
       const threshold = SWIPE_THRESHOLD * SCALE;
@@ -568,11 +600,7 @@
     if (state === 'GAME_OVER') {
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (!nicknameSubmitted) {
-          nicknameSubmitted = true;
-          const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
-          submitHighScore(finalName, score);
-        }
+        submitNicknameIfReady();
         return;
       }
       if (e.key === 'Backspace') {
@@ -582,7 +610,7 @@
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        state = 'START_MENU';
+        skipToMenu();
         return;
       }
       if (e.key.length === 1 && /[a-zA-Z0-9 ]/.test(e.key) && nicknameInput.length < 10) {
@@ -847,7 +875,7 @@
     const unit = CLOUD_UNIT_BASE * SCALE;
     const tileW = CLOUD_TILE_REF[0].length * unit;
     const bandH = CLOUD_TILE_REF.length * unit;
-    const cloudTop = skyH * 0.08;
+    const cloudTop = skyH * 0.15; // Lowered from 0.08 to 0.15
     const offset = ((cloudScrollX % tileW) + tileW) % tileW;
     const drawW = W + tileW * 2;
     drawSpriteGrid(ctx, CLOUD_TILE_REF, CLOUD_PALETTE, offset - tileW, cloudTop, drawW, bandH, unit, true, false, true);
@@ -1016,7 +1044,7 @@
       ctx.fillText('TAP SCREEN OR PRESS SPACE TO START', W / 2, H * 0.44);
     }
 
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = '#1a1a1a'; // Deep high-contrast charcoal black for absolute readability
     ctx.font = `${Math.max(10, 12 * SCALE)}px 'Courier New', monospace`;
     ctx.fillText('SWIPE UP: JUMP', W / 2, H * 0.52);
     ctx.fillText('SWIPE DOWN: DUCK / FAST-FALL', W / 2, H * 0.52 + 18 * SCALE);
@@ -1157,11 +1185,44 @@
     ctx.fillText(displayName || ' ', W / 2, inputY + boxH / 2 + 1);
     ctx.textBaseline = 'alphabetic';
 
+    // v1.6.1/1.6.2 — on-screen [ SUBMIT ] + [ SKIP TO MENU ] buttons, side by
+    // side (mobile touch fix: neither Enter nor Escape can be sent from a
+    // touchscreen, so both actions need bounded tap zones).
+    const btnGap = 10 * SCALE;
+    const pairW = W * 0.62;
+    const submitBtnW = pairW * 0.46, skipBtnW = pairW * 0.54, btnH = 36 * SCALE;
+    const pairX = W / 2 - pairW / 2;
+    const btnY = inputY + boxH + 14 * SCALE;
+
+    const submitBtnX = pairX;
+    submitBtnRect = { x: submitBtnX, y: btnY, w: submitBtnW, h: btnH };
+    ctx.fillStyle = nicknameSubmitted ? '#1a1a1a' : '#0a0a0a';
+    ctx.fillRect(submitBtnX, btnY, submitBtnW, btnH);
+    ctx.strokeStyle = nicknameSubmitted ? '#555' : '#3bff6e';
+    ctx.lineWidth = 2 * SCALE;
+    ctx.strokeRect(submitBtnX, btnY, submitBtnW, btnH);
+    ctx.fillStyle = nicknameSubmitted ? '#555' : '#3bff6e';
+    ctx.font = `bold ${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('[ SUBMIT ]', submitBtnX + submitBtnW / 2, btnY + btnH / 2 + 1);
+
+    const skipBtnX = pairX + submitBtnW + btnGap;
+    skipBtnRect = { x: skipBtnX, y: btnY, w: skipBtnW, h: btnH };
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(skipBtnX, btnY, skipBtnW, btnH);
+    ctx.strokeStyle = '#ff3b3b';
+    ctx.lineWidth = 2 * SCALE;
+    ctx.strokeRect(skipBtnX, btnY, skipBtnW, btnH);
+    ctx.fillStyle = '#ff3b3b';
+    ctx.font = `bold ${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+    ctx.fillText('[ SKIP TO MENU ]', skipBtnX + skipBtnW / 2, btnY + btnH / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+
     ctx.fillStyle = '#888';
     ctx.font = `${Math.max(9, 11 * SCALE)}px 'Courier New', monospace`;
     ctx.fillText(
-      nicknameSubmitted ? 'SUBMITTING...' : 'PRESS ENTER TO SUBMIT  ·  ESC TO SKIP',
-      W / 2, inputY + boxH + 20 * SCALE
+      nicknameSubmitted ? 'SUBMITTING...' : 'TAP BUTTONS OR USE KEYBOARD (ENTER / ESC)',
+      W / 2, btnY + btnH + 18 * SCALE
     );
   }
 
