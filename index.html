@@ -35,6 +35,12 @@
   'use strict';
 
   // ---------------------------------------------------------------------
+  // v1.6 — SUPABASE BACKEND (global leaderboard)
+  // ---------------------------------------------------------------------
+  const SUPABASE_URL = "https://twtxaaejhvkcyaamctjj.supabase.co/rest/v1/";
+  const SUPABASE_KEY = "sb_publishable_dMSyw2pTB4Kl-phtVdmrXQ_0od7Z-A-";
+
+  // ---------------------------------------------------------------------
   // SETUP / CANVAS
   // ---------------------------------------------------------------------
   const canvas = document.getElementById('gameCanvas');
@@ -170,9 +176,18 @@
     return (v * v) / (2 * GRAVITY * SCALE);
   }
 
-  // Ground hazards: vibrant red/orange (unchanged — already reads clearly
-  // against the grass/dirt foreground, no clash reported).
-  const GROUND_PALETTE = { 1: '#ff5722', 2: '#ffb74d', 3: '#b71c1c' };
+  // v1.5.5: spike and lava used to share one GROUND_PALETTE — split into two
+  // dedicated palettes so the two ground hazards are visually distinct.
+  const SPIKE_PALETTE = {
+    1: '#ffffff', // Pure White (the needle outer edges)
+    2: '#f0f0f0', // Crisp Light Gray/White (the needle inner infill)
+    3: '#ffeb3b'  // Vibrant Arcade Yellow (the solid flat base plate)
+  };
+  const LAVA_PALETTE = {
+    1: '#ff5722', // Vibrant Retro Orange
+    2: '#ffb74d', // Lighter Shading Accent
+    3: '#b71c1c'  // Deep Danger Red (the molten base)
+  };
   // v1.5.1: bird and long_wall used to share one electric-blue SKY_PALETTE,
   // which is exactly what got lost against the new light-blue sky backdrop.
   // Split into two dedicated high-contrast palettes, one per obstacle,
@@ -339,8 +354,8 @@
   // with — obstacleHitbox() and drawObstacles() both read from this table so
   // the visible sprite and its collision box can never fall out of sync.
   const OBSTACLE_SPRITES = {
-    spike:     { ref: SPIKE_REF,     palette: GROUND_PALETTE, tileX: false, tileY: false },
-    lava:      { ref: LAVA_TILE_REF, palette: GROUND_PALETTE, tileX: true,  tileY: false },
+    spike:     { ref: SPIKE_REF,     palette: SPIKE_PALETTE,  tileX: false, tileY: false },
+    lava:      { ref: LAVA_TILE_REF, palette: LAVA_PALETTE,   tileX: true,  tileY: false },
     bird:      { ref: BIRD_REF,      palette: BIRD_PALETTE,   tileX: false, tileY: false },
     long_wall: { ref: WALL_TILE_REF, palette: BRICK_PALETTE, tileX: true,  tileY: true }
   };
@@ -357,11 +372,20 @@
   // ---------------------------------------------------------------------
   // STATE
   // ---------------------------------------------------------------------
-  let state = 'ready'; // 'ready' | 'playing' | 'dead'
+  let state = 'START_MENU'; // 'START_MENU' | 'playing' | 'GAME_OVER' | 'LEADERBOARD_SCREEN'
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0; } catch (e) { highScore = 0; }
 
-  let player, obstacles, particles, score, scoreTimer, spawnTimer, beatHighScoreThisRun, flashTimer, ripPhrase, tryAgainRect, groundScrollX, cloudScrollX, blinkTimer, blinkOn, stepPhase;
+  let player, obstacles, particles, score, scoreTimer, spawnTimer, beatHighScoreThisRun, flashTimer, ripPhrase, groundScrollX, cloudScrollX, blinkTimer, blinkOn, stepPhase;
+
+  // v1.6 — arcade state machine: menu, leaderboard, ranked game-over UI
+  let leaderboardData = [];
+  let leaderboardStatus = 'idle'; // 'idle' | 'loading' | 'loaded'
+  let playerRank = null;
+  let nicknameInput = '';
+  let nicknameSubmitted = false;
+  let leaderboardBtnRect = null;
+  let backToMenuRect = null;
 
   function resetPlayer() {
     player = {
@@ -391,6 +415,65 @@
   }
 
   resetGame();
+
+  // ---------------------------------------------------------------------
+  // v1.6 — SUPABASE LEADERBOARD (fetch/submit + fail-safe mock fallback)
+  // ---------------------------------------------------------------------
+  const MOCK_LEADERBOARD = [
+    { name: 'ACE', score: 128 },
+    { name: 'RUX', score: 97 },
+    { name: 'ZED', score: 84 },
+    { name: 'FOX', score: 61 },
+    { name: 'PIP', score: 45 }
+  ];
+
+  async function fetchLeaderboard() {
+    leaderboardStatus = 'loading';
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}leaderboard?select=name,score&order=score.desc&limit=5`,
+        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+      );
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      leaderboardData = Array.isArray(data) && data.length ? data : MOCK_LEADERBOARD.slice();
+    } catch (e) {
+      // FAIL-SAFE: network/DB unreachable — fall back to local mock data so the
+      // state machine never freezes waiting on a dead connection.
+      leaderboardData = MOCK_LEADERBOARD.slice();
+    }
+    leaderboardStatus = 'loaded';
+  }
+
+  function computePlayerRank(sc) {
+    let rank = 1;
+    for (const row of leaderboardData) { if (row.score > sc) rank++; }
+    return rank;
+  }
+
+  async function submitHighScore(name, sc) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}leaderboard`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ name: name, score: sc })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+      // FAIL-SAFE: POST failed — splice locally so the board still reflects
+      // the run instead of locking the UI on a rejected promise.
+      leaderboardData.push({ name, score: sc });
+      leaderboardData.sort((a, b) => b.score - a.score);
+      leaderboardData = leaderboardData.slice(0, 5);
+    }
+    await fetchLeaderboard();
+    state = 'LEADERBOARD_SCREEN';
+  }
 
   // ---------------------------------------------------------------------
   // INPUT
@@ -435,13 +518,6 @@
     sfxStart();
   }
 
-  function handleRetryTap() {
-    ensureAudio();
-    state = 'playing';
-    resetGame();
-    sfxStart();
-  }
-
   canvas.addEventListener('pointerdown', (e) => {
     ensureAudio();
     pointerActive = true;
@@ -460,15 +536,23 @@
     const dy = endY - pointerStartY;
     const dx = endX - pointerStartX;
 
-    if (state === 'ready') {
+    if (state === 'START_MENU') {
+      if (pointInRect(endX, endY, leaderboardBtnRect)) {
+        state = 'LEADERBOARD_SCREEN';
+        fetchLeaderboard();
+        return;
+      }
       handleStartTap();
       return;
     }
-    if (state === 'dead') {
-      if (pointInRect(endX, endY, tryAgainRect)) {
-        handleRetryTap();
+    if (state === 'LEADERBOARD_SCREEN') {
+      if (pointInRect(endX, endY, backToMenuRect)) {
+        state = 'START_MENU';
       }
       return;
+    }
+    if (state === 'GAME_OVER') {
+      return; // nickname entry is keyboard-driven (see keydown handler)
     }
     if (state === 'playing') {
       const threshold = SWIPE_THRESHOLD * SCALE;
@@ -479,22 +563,49 @@
   });
 
   window.addEventListener('keydown', (e) => {
+    // v1.6 — GAME_OVER: free-text nickname entry (up to 10 chars), Enter to
+    // submit via submitHighScore(), Esc to skip back to the menu.
+    if (state === 'GAME_OVER') {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!nicknameSubmitted) {
+          nicknameSubmitted = true;
+          const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
+          submitHighScore(finalName, score);
+        }
+        return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        nicknameInput = nicknameInput.slice(0, -1);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        state = 'START_MENU';
+        return;
+      }
+      if (e.key.length === 1 && /[a-zA-Z0-9 ]/.test(e.key) && nicknameInput.length < 10) {
+        e.preventDefault();
+        nicknameInput += e.key.toUpperCase();
+      }
+      return;
+    }
+
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
       e.preventDefault();
       ensureAudio();
-      if (state === 'ready') { handleStartTap(); return; }
-      if (state === 'dead') { handleRetryTap(); return; }
+      if (state === 'START_MENU') { handleStartTap(); return; }
       doJump();
     } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
       e.preventDefault();
       ensureAudio();
-      if (state === 'dead') { handleRetryTap(); return; }
       doDownAction();
     } else if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
       ensureAudio();
-      if (state === 'ready') handleStartTap();
-      else if (state === 'dead') handleRetryTap();
+      if (state === 'START_MENU') handleStartTap();
+      else if (state === 'LEADERBOARD_SCREEN') state = 'START_MENU';
     }
   });
 
@@ -633,7 +744,7 @@
   // UPDATE
   // ---------------------------------------------------------------------
   function killPlayer() {
-    state = 'dead';
+    state = 'GAME_OVER';
     ripPhrase = RIP_PHRASES[(Math.random() * RIP_PHRASES.length) | 0];
     const cx = W * PLAYER_X_FRAC;
     const groundY = H - BANNER_H;
@@ -643,6 +754,11 @@
       highScore = score;
       try { localStorage.setItem(HIGH_SCORE_KEY, String(highScore)); } catch (e) {}
     }
+    // v1.6 — reset nickname entry and fetch the live board to rank this run
+    nicknameInput = '';
+    nicknameSubmitted = false;
+    playerRank = null;
+    fetchLeaderboard().then(() => { playerRank = computePlayerRank(score); });
   }
 
   function update(dt) {
@@ -877,7 +993,9 @@
     ctx.fillText('BEST ' + Math.max(highScore, score), W / 2, 48 * s);
   }
 
-  function drawReadyScreen() {
+  // v1.6 — RETRO ARCADE START MENU. Static beautiful menu w/ flashing prompt
+  // and a bounded tap-zone button that opens the global leaderboard.
+  function drawStartMenu() {
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.fillRect(0, 0, W, H - BANNER_H);
 
@@ -885,55 +1003,166 @@
     ctx.fillStyle = '#3bff6e';
     ctx.font = `bold ${Math.max(24, 34 * SCALE)}px 'Courier New', monospace`;
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('SWIPE RUSH', W / 2, H * 0.34);
+    ctx.fillText('SWIPE RUSH', W / 2, H * 0.30);
 
     ctx.fillStyle = '#ffd700';
     ctx.font = `bold ${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
-    ctx.fillText('BEST SCORE: ' + highScore, W / 2, H * 0.34 + 26 * SCALE);
+    ctx.fillText('BEST SCORE: ' + highScore, W / 2, H * 0.30 + 22 * SCALE);
 
-    const pulse = 0.85 + 0.15 * Math.sin(performance.now() / 260);
-    ctx.globalAlpha = pulse;
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${Math.max(15, 18 * SCALE)}px 'Courier New', monospace`;
-    ctx.fillText('TAP TO START', W / 2, H * 0.5);
-    ctx.globalAlpha = 1;
+    // flashing start prompt
+    if (Math.floor(performance.now() / 500) % 2 === 0) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${Math.max(12, 15 * SCALE)}px 'Courier New', monospace`;
+      ctx.fillText('TAP SCREEN OR PRESS SPACE TO START', W / 2, H * 0.44);
+    }
 
     ctx.fillStyle = '#888';
     ctx.font = `${Math.max(10, 12 * SCALE)}px 'Courier New', monospace`;
-    ctx.fillText('SWIPE UP: JUMP', W / 2, H * 0.58);
-    ctx.fillText('SWIPE DOWN: DUCK / FAST-FALL', W / 2, H * 0.58 + 18 * SCALE);
-    ctx.fillText('(Desktop: Arrow Up / Arrow Down)', W / 2, H * 0.58 + 36 * SCALE);
+    ctx.fillText('SWIPE UP: JUMP', W / 2, H * 0.52);
+    ctx.fillText('SWIPE DOWN: DUCK / FAST-FALL', W / 2, H * 0.52 + 18 * SCALE);
+    ctx.fillText('(Desktop: Arrow Up / Arrow Down)', W / 2, H * 0.52 + 36 * SCALE);
+
+    // bounded retro tap-zone -> LEADERBOARD_SCREEN
+    const btnW = W * 0.64, btnH = 40 * SCALE;
+    const btnX = W / 2 - btnW / 2, btnY = H * 0.70;
+    leaderboardBtnRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.strokeStyle = '#3bff6e';
+    ctx.lineWidth = 2 * SCALE;
+    ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = '#3bff6e';
+    ctx.font = `bold ${Math.max(12, 14 * SCALE)}px 'Courier New', monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('[ VIEW LEADERBOARD ]', W / 2, btnY + btnH / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
   }
 
-  function drawDeadScreen() {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  // v1.6 — GLOBAL LEADERBOARD SCREEN. Centered glowing RANK|NAME|SCORE table
+  // fed by fetchLeaderboard(); [ BACK TO MENU ] returns to START_MENU.
+  function drawLeaderboardScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(0, 0, W, H - BANNER_H);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#3bff6e';
+    ctx.font = `bold ${Math.max(18, 24 * SCALE)}px 'Courier New', monospace`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('GLOBAL LEADERBOARD', W / 2, H * 0.16);
+
+    const tableX = W * 0.12, tableW = W * 0.76;
+    const rowH = 30 * SCALE;
+    const headerY = H * 0.22;
+
+    ctx.save();
+    ctx.shadowColor = '#3bff6e';
+    ctx.shadowBlur = 12 * SCALE;
+    ctx.strokeStyle = '#3bff6e';
+    ctx.lineWidth = 2 * SCALE;
+    ctx.strokeRect(tableX, headerY, tableW, rowH * 6);
+    ctx.restore();
+
+    ctx.fillStyle = '#ffd700';
+    ctx.font = `bold ${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('RANK', tableX + tableW * 0.15, headerY + rowH / 2);
+    ctx.fillText('NAME', tableX + tableW * 0.5, headerY + rowH / 2);
+    ctx.fillText('SCORE', tableX + tableW * 0.85, headerY + rowH / 2);
+    ctx.strokeStyle = '#ffd700';
+    ctx.beginPath();
+    ctx.moveTo(tableX, headerY + rowH);
+    ctx.lineTo(tableX + tableW, headerY + rowH);
+    ctx.stroke();
+
+    if (leaderboardStatus !== 'loaded') {
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(12, 14 * SCALE)}px 'Courier New', monospace`;
+      ctx.fillText('LOADING...', W / 2, headerY + rowH * 3);
+    } else {
+      const rows = leaderboardData.slice(0, 5);
+      if (!rows.length) {
+        ctx.fillStyle = '#888';
+        ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+        ctx.fillText('NO SCORES YET', W / 2, headerY + rowH * 3);
+      }
+      rows.forEach((row, i) => {
+        const ry = headerY + rowH * (i + 1) + rowH / 2;
+        ctx.fillStyle = i === 0 ? '#ffd700' : '#ffffff';
+        ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+        ctx.fillText('#' + (i + 1), tableX + tableW * 0.15, ry);
+        ctx.fillText(String(row.name).toUpperCase().slice(0, 10), tableX + tableW * 0.5, ry);
+        ctx.fillText(String(row.score), tableX + tableW * 0.85, ry);
+      });
+    }
+
+    const btnW = W * 0.6, btnH = 40 * SCALE;
+    const btnX = W / 2 - btnW / 2, btnY = headerY + rowH * 6 + 24 * SCALE;
+    backToMenuRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.strokeStyle = '#3bff6e';
+    ctx.lineWidth = 2 * SCALE;
+    ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = '#3bff6e';
+    ctx.font = `bold ${Math.max(12, 14 * SCALE)}px 'Courier New', monospace`;
+    ctx.fillText('[ BACK TO MENU ]', W / 2, btnY + btnH / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // v1.6 — RANKED GAME OVER STATE. Shows score + live global placement, then
+  // a typed nickname prompt; Enter -> submitHighScore() -> LEADERBOARD_SCREEN.
+  function drawGameOverScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, W, H - BANNER_H);
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ff3b3b';
-    ctx.font = `bold ${Math.max(32, 46 * SCALE)}px 'Courier New', monospace`;
-    ctx.fillText('RIP', W / 2, H * 0.3);
+    ctx.font = `bold ${Math.max(28, 40 * SCALE)}px 'Courier New', monospace`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('GAME OVER', W / 2, H * 0.20);
 
     ctx.fillStyle = '#fff';
-    ctx.font = `${Math.max(12, 14 * SCALE)}px 'Courier New', monospace`;
-    wrapText(ripPhrase, W / 2, H * 0.3 + 34 * SCALE, W * 0.78, 18 * SCALE);
+    ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+    wrapText(ripPhrase, W / 2, H * 0.20 + 24 * SCALE, W * 0.78, 16 * SCALE);
 
     ctx.fillStyle = '#ffd700';
-    ctx.font = `bold ${Math.max(13, 15 * SCALE)}px 'Courier New', monospace`;
-    ctx.fillText('SCORE ' + score + '   BEST ' + highScore, W / 2, H * 0.3 + 34 * SCALE + 60 * SCALE);
-
-    const btnW = W * 0.55, btnH = 44 * SCALE;
-    const btnX = W / 2 - btnW / 2, btnY = H * 0.62;
-    tryAgainRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+    ctx.font = `bold ${Math.max(14, 18 * SCALE)}px 'Courier New', monospace`;
+    ctx.fillText('SCORE: ' + score, W / 2, H * 0.20 + 58 * SCALE);
 
     ctx.fillStyle = '#3bff6e';
-    roundRectPath(ctx, btnX, btnY, btnW, btnH, 8 * SCALE);
-    ctx.fill();
-    ctx.fillStyle = '#052b0d';
-    ctx.font = `bold ${Math.max(14, 17 * SCALE)}px 'Courier New', monospace`;
+    ctx.font = `bold ${Math.max(12, 15 * SCALE)}px 'Courier New', monospace`;
+    const placementText = playerRank ? 'YOU PLACED #' + playerRank + ' GLOBAL!' : 'CALCULATING RANK...';
+    ctx.fillText(placementText, W / 2, H * 0.20 + 58 * SCALE + 24 * SCALE);
+
+    // nickname entry
+    const boxY = H * 0.52;
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+    ctx.fillText('ENTER NICKNAME:', W / 2, boxY);
+
+    const boxW = W * 0.55, boxH = 34 * SCALE;
+    const boxX = W / 2 - boxW / 2;
+    const inputY = boxY + 14 * SCALE;
+    ctx.strokeStyle = '#3bff6e';
+    ctx.lineWidth = 2 * SCALE;
+    ctx.strokeRect(boxX, inputY, boxW, boxH);
+
+    const caretOn = Math.floor(performance.now() / 400) % 2 === 0;
+    const displayName = nicknameInput + (caretOn && !nicknameSubmitted ? '_' : '');
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.max(14, 16 * SCALE)}px 'Courier New', monospace`;
     ctx.textBaseline = 'middle';
-    ctx.fillText('TRY AGAIN', W / 2, btnY + btnH / 2 + 1);
+    ctx.fillText(displayName || ' ', W / 2, inputY + boxH / 2 + 1);
     ctx.textBaseline = 'alphabetic';
+
+    ctx.fillStyle = '#888';
+    ctx.font = `${Math.max(9, 11 * SCALE)}px 'Courier New', monospace`;
+    ctx.fillText(
+      nicknameSubmitted ? 'SUBMITTING...' : 'PRESS ENTER TO SUBMIT  ·  ESC TO SKIP',
+      W / 2, inputY + boxH + 20 * SCALE
+    );
   }
 
   function wrapText(text, cx, y, maxWidth, lineHeight) {
@@ -958,12 +1187,13 @@
     drawGround();
     drawObstacles();
     drawParticles();
-    if (state !== 'dead') drawPlayer();
-    if (state !== 'ready') drawDebugHitboxes();
+    if (state !== 'GAME_OVER') drawPlayer();
+    if (state === 'playing') drawDebugHitboxes();
     drawScoreUI();
     drawBanner();
-    if (state === 'ready') drawReadyScreen();
-    if (state === 'dead') drawDeadScreen();
+    if (state === 'START_MENU') drawStartMenu();
+    if (state === 'GAME_OVER') drawGameOverScreen();
+    if (state === 'LEADERBOARD_SCREEN') drawLeaderboardScreen();
   }
 
   // ---------------------------------------------------------------------
