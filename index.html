@@ -1137,6 +1137,11 @@
     const rowH = 30 * SCALE;
     const headerY = H * 0.22;
 
+    // v1.8.2 — solid container fill so scrolling background/parallax assets
+    // can no longer bleed through the rows behind the table.
+    ctx.fillStyle = '#000000'; // Pure arcade black background overlay
+    ctx.fillRect(tableX, headerY, tableW, rowH * 11);
+
     ctx.save();
     ctx.shadowColor = '#3bff6e';
     ctx.shadowBlur = 12 * SCALE;
@@ -1176,7 +1181,7 @@
         else if (i === 1 || i === 2) rowColor = '#ff9800'; // 2nd & 3rd: Neon Orange/Gold
         else if (i >= 3 && i <= 5) rowColor = '#00e5ff';   // 4th-6th: Cyber Cyan
         ctx.fillStyle = rowColor;
-        ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
+        ctx.font = `bold ${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
         ctx.fillText('#' + (i + 1), tableX + tableW * 0.15, ry);
         ctx.fillText(String(row.name).toUpperCase().slice(0, 10), tableX + tableW * 0.5, ry);
         ctx.fillText(String(row.score), tableX + tableW * 0.85, ry);
