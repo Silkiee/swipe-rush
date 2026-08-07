@@ -384,10 +384,12 @@
   let playerRank = null;
   let nicknameInput = '';
   let nicknameSubmitted = false;
+  let isHighScoreEntry = false; // v1.8.1 — true only when the run cracked the Top 10
   let leaderboardBtnRect = null;
   let backToMenuRect = null;
   let submitBtnRect = null; // v1.6.1 — on-screen [ SUBMIT ] tap target (mobile fix)
   let skipBtnRect = null;   // v1.6.2 — on-screen [ SKIP TO MENU ] tap target (mobile fix)
+  let nicknameBoxRect = null; // v1.8.1 — arcade nickname input box tap target
 
   function resetPlayer() {
     player = {
@@ -433,7 +435,7 @@
     leaderboardStatus = 'loading';
     try {
       const res = await fetch(
-        `${SUPABASE_URL}leaderboard?select=name,score&order=score.desc&limit=5`,
+        `${SUPABASE_URL}leaderboard?select=name,score&order=score.desc&limit=10`,
         { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
       );
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -471,17 +473,20 @@
       // the run instead of locking the UI on a rejected promise.
       leaderboardData.push({ name, score: sc });
       leaderboardData.sort((a, b) => b.score - a.score);
-      leaderboardData = leaderboardData.slice(0, 5);
+      leaderboardData = leaderboardData.slice(0, 10);
     }
     await fetchLeaderboard();
     state = 'LEADERBOARD_SCREEN';
   }
 
-  // v1.6.1 — shared trigger for the Enter key AND the on-screen [ SUBMIT ]
-  // tap button, so both paths lock out multi-submits identically.
+  // v1.8.1 — shared trigger for the Enter key AND the on-screen [ SUBMIT ]
+  // tap button, so both paths lock out multi-submits identically. Only fires
+  // while the qualification gate has flagged this run as a high-score entry.
   function submitNicknameIfReady() {
-    if (state !== 'GAME_OVER' || nicknameSubmitted) return;
+    if (state !== 'GAME_OVER' || !isHighScoreEntry || nicknameSubmitted) return;
     nicknameSubmitted = true;
+    hiddenInput.blur();
+    hiddenInput.value = '';
     const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
     submitHighScore(finalName, score);
   }
@@ -490,14 +495,35 @@
   // tap button: clears the in-progress nickname state and routes to START_MENU.
   function skipToMenu() {
     if (state !== 'GAME_OVER') return;
+    hiddenInput.blur();
+    hiddenInput.value = '';
     nicknameInput = '';
     nicknameSubmitted = false;
+    isHighScoreEntry = false;
     state = 'START_MENU';
   }
 
   // ---------------------------------------------------------------------
   // INPUT
   // ---------------------------------------------------------------------
+
+  // v1.8.1 — bulletproof invisible input overlay: focusing this real <input>
+  // (instead of faking a canvas caret) is what lets mobile browsers pop the
+  // soft keyboard open reliably, with no coordinate race conditions.
+  const hiddenInput = document.createElement('input');
+  hiddenInput.type = 'text';
+  hiddenInput.maxLength = 10;
+  hiddenInput.style.position = 'fixed';
+  hiddenInput.style.opacity = '0'; // Completely hidden to preserve the canvas art
+  hiddenInput.style.pointerEvents = 'none';
+  document.body.appendChild(hiddenInput);
+
+  hiddenInput.addEventListener('input', (e) => {
+    if (state === 'GAME_OVER' && isHighScoreEntry) {
+      nicknameInput = e.target.value.toUpperCase();
+    }
+  });
+
   let pointerActive = false, pointerStartY = 0, pointerStartX = 0, pointerStartT = 0;
 
   function doJump() {
@@ -545,6 +571,14 @@
     pointerStartX = e.clientX - rect.left;
     pointerStartY = e.clientY - rect.top;
     pointerStartT = performance.now();
+
+    // v1.8.1 — tapping in/near the arcade nickname box focuses the hidden
+    // input synchronously, on the same user gesture, so mobile soft
+    // keyboards open reliably.
+    if (state === 'GAME_OVER' && isHighScoreEntry && pointInRect(pointerStartX, pointerStartY, nicknameBoxRect)) {
+      hiddenInput.value = nicknameInput;
+      hiddenInput.focus(); // Synchronous direct execution pops up mobile keyboards perfectly
+    }
   });
 
   canvas.addEventListener('pointerup', (e) => {
@@ -595,9 +629,11 @@
   });
 
   window.addEventListener('keydown', (e) => {
-    // v1.6 — GAME_OVER: free-text nickname entry (up to 10 chars), Enter to
-    // submit via submitHighScore(), Esc to skip back to the menu.
-    if (state === 'GAME_OVER') {
+    // v1.8.1 — GAME_OVER: free-text nickname entry (up to 10 chars), gated
+    // by isHighScoreEntry so keystrokes only register once the qualification
+    // check has actually cleared this run for the Top 10. Enter submits via
+    // submitHighScore(), Esc skips back to the menu.
+    if (state === 'GAME_OVER' && isHighScoreEntry) {
       if (e.key === 'Enter') {
         e.preventDefault();
         submitNicknameIfReady();
@@ -782,11 +818,29 @@
       highScore = score;
       try { localStorage.setItem(HIGH_SCORE_KEY, String(highScore)); } catch (e) {}
     }
-    // v1.6 — reset nickname entry and fetch the live board to rank this run
+    // v1.8.1 — reset nickname state, fetch the live Top 10 cache, then run
+    // the strict qualification gate entirely in-canvas (no window.prompt()).
     nicknameInput = '';
     nicknameSubmitted = false;
+    isHighScoreEntry = false;
     playerRank = null;
-    fetchLeaderboard().then(() => { playerRank = computePlayerRank(score); });
+    fetchLeaderboard().then(() => {
+      playerRank = computePlayerRank(score);
+      const top10 = leaderboardData.slice(0, 10);
+      const qualifies = top10.length < 10 || score > top10[9].score;
+
+      if (qualifies) {
+        // CONDITION A — Qualified: stay on GAME_OVER and flip on the arcade
+        // text-entry box drawing loop.
+        isHighScoreEntry = true;
+      } else {
+        // CONDITION B — Did not qualify: bypass the typing screen entirely
+        // and route straight to the leaderboard matrix.
+        isHighScoreEntry = false;
+        nicknameSubmitted = true;
+        state = 'LEADERBOARD_SCREEN';
+      }
+    });
   }
 
   function update(dt) {
@@ -1088,7 +1142,7 @@
     ctx.shadowBlur = 12 * SCALE;
     ctx.strokeStyle = '#3bff6e';
     ctx.lineWidth = 2 * SCALE;
-    ctx.strokeRect(tableX, headerY, tableW, rowH * 6);
+    ctx.strokeRect(tableX, headerY, tableW, rowH * 11);
     ctx.restore();
 
     ctx.fillStyle = '#ffd700';
@@ -1108,7 +1162,7 @@
       ctx.font = `${Math.max(12, 14 * SCALE)}px 'Courier New', monospace`;
       ctx.fillText('LOADING...', W / 2, headerY + rowH * 3);
     } else {
-      const rows = leaderboardData.slice(0, 5);
+      const rows = leaderboardData.slice(0, 10);
       if (!rows.length) {
         ctx.fillStyle = '#888';
         ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
@@ -1116,7 +1170,12 @@
       }
       rows.forEach((row, i) => {
         const ry = headerY + rowH * (i + 1) + rowH / 2;
-        ctx.fillStyle = i === 0 ? '#ffd700' : '#ffffff';
+        // v1.8 — neon arcade rank tiers by row index.
+        let rowColor = '#3bff6e'; // Default Neon Green for ranks 7-10
+        if (i === 0) rowColor = '#ff0055';           // 1st Place: Hot Pink
+        else if (i === 1 || i === 2) rowColor = '#ff9800'; // 2nd & 3rd: Neon Orange/Gold
+        else if (i >= 3 && i <= 5) rowColor = '#00e5ff';   // 4th-6th: Cyber Cyan
+        ctx.fillStyle = rowColor;
         ctx.font = `${Math.max(11, 13 * SCALE)}px 'Courier New', monospace`;
         ctx.fillText('#' + (i + 1), tableX + tableW * 0.15, ry);
         ctx.fillText(String(row.name).toUpperCase().slice(0, 10), tableX + tableW * 0.5, ry);
@@ -1125,7 +1184,7 @@
     }
 
     const btnW = W * 0.6, btnH = 40 * SCALE;
-    const btnX = W / 2 - btnW / 2, btnY = headerY + rowH * 6 + 24 * SCALE;
+    const btnX = W / 2 - btnW / 2, btnY = headerY + rowH * 11 + 24 * SCALE;
     backToMenuRect = { x: btnX, y: btnY, w: btnW, h: btnH };
 
     ctx.fillStyle = '#0a0a0a';
@@ -1173,6 +1232,7 @@
     const boxW = W * 0.55, boxH = 34 * SCALE;
     const boxX = W / 2 - boxW / 2;
     const inputY = boxY + 14 * SCALE;
+    nicknameBoxRect = { x: boxX, y: inputY, w: boxW, h: boxH }; // v1.8.1 — tap target for hiddenInput focus
     ctx.strokeStyle = '#3bff6e';
     ctx.lineWidth = 2 * SCALE;
     ctx.strokeRect(boxX, inputY, boxW, boxH);
