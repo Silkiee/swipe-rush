@@ -35,7 +35,7 @@
   'use strict';
 
   // ---------------------------------------------------------------------
-  // v1.6 — SUPABASE BACKEND (global leaderboard)
+  // SUPABASE BACKEND (global leaderboard)
   // ---------------------------------------------------------------------
   const SUPABASE_URL = "https://twtxaaejhvkcyaamctjj.supabase.co/rest/v1/";
   const SUPABASE_KEY = "sb_publishable_dMSyw2pTB4Kl-phtVdmrXQ_0od7Z-A-";
@@ -144,20 +144,12 @@
   const SCROLL_SPEED_BASE = 260;      // px/s at SCALE=1 — LOCKED, never increases
   const GRAVITY = 2100;
   const JUMP_VELOCITY = -760;
-  // v1.4: the real in-game "safe" window isn't just HAZARD_CROSS_TIME — the
-  // duck box (PLAYER_DUCK_W) has its own width, so the wall's leading edge
-  // reaches the player before the wall's x==playerX point, and its trailing
-  // edge clears after. True zero-margin duration = (wall + duck-box width) /
-  // scroll speed = (80 + 50) / 260 = 0.5s EXACTLY — i.e. the old 0.5s duck had
-  // zero safety margin, which is the early-stand-up bug. Extended a few frames.
-  const DUCK_DURATION = 0.6;          // seconds — 36 frames @ 60fps (was 0.5 / 30 frames)
+  const DUCK_DURATION = 0.6;          // seconds — 36 frames @ 60fps
 
   const PLAYER_X_FRAC = 0.22;         // fixed horizontal position, fraction of W
   const PLAYER_STAND_W = 40, PLAYER_STAND_H = 42;
   const PLAYER_DUCK_W = 50, PLAYER_DUCK_H = 24;
-  // v1.3: no more arbitrary shrink factor — hitboxes are computed pixel-perfect
-  // directly from each sprite's drawn matrix (see spriteHitbox()).
-  const DEBUG_HITBOXES = true; // TEMP — draws neon-green hitbox outlines for playtesting
+  const DEBUG_HITBOXES = false;
 
   const SPAWN_BASE_INTERVAL = 1.65;
   const SPAWN_MIN_INTERVAL = 0.68;
@@ -166,7 +158,7 @@
   const SWIPE_THRESHOLD = 28;         // px at SCALE=1
 
   // ---------------------------------------------------------------------
-  // PIXEL ART OBSTACLE SYSTEM (v1.1) — pure code, no image assets
+  // PIXEL ART OBSTACLE SYSTEM — pure code, no image assets
   // ---------------------------------------------------------------------
   const PIXEL_UNIT_BASE = 5;          // size of one "chunky" retro pixel at SCALE=1
   function pixelUnit() { return PIXEL_UNIT_BASE * SCALE; }
@@ -176,8 +168,6 @@
     return (v * v) / (2 * GRAVITY * SCALE);
   }
 
-  // v1.5.5: spike and lava used to share one GROUND_PALETTE — split into two
-  // dedicated palettes so the two ground hazards are visually distinct.
   const SPIKE_PALETTE = {
     1: '#ffffff', // Pure White (the needle outer edges)
     2: '#f0f0f0', // Crisp Light Gray/White (the needle inner infill)
@@ -188,14 +178,7 @@
     2: '#ffb74d', // Lighter Shading Accent
     3: '#b71c1c'  // Deep Danger Red (the molten base)
   };
-  // v1.5.1: bird and long_wall used to share one electric-blue SKY_PALETTE,
-  // which is exactly what got lost against the new light-blue sky backdrop.
-  // Split into two dedicated high-contrast palettes, one per obstacle,
-  // recalibrated from the bird.png / wall.png reference art. Only hex values
-  // changed here — BIRD_REF/WALL_TILE_REF and all hitbox code are untouched.
   const BIRD_PALETTE = { 1: '#242424', 2: '#f6f4ec', 3: '#f5a623' }; // 1=dark wingtip/wing edge, 2=white body, 3=orange eye/beak accent
-  // v1.5.3: renamed WALL_PALETTE -> BRICK_PALETTE, inverted toward vibrant
-  // orange as the dominant body color with mortar (code 3) as thin dark lines.
   const BRICK_PALETTE = {
     1: '#ff5722',  // Vibrant Retro Orange (the main brick bodies)
     2: '#ffb74d',  // Lighter Accent Orange (brick texture shading)
@@ -241,19 +224,15 @@
     [3,3,3,3,3,3,3,3]
   ];
 
-  // -----------------------------------------------------------------
-  // v1.5 — PARALLAX BACKDROP: pixel grass/dirt ground + pixel cloud sky
-  // -----------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // PARALLAX BACKDROP: pixel grass/dirt ground + pixel cloud sky
+  // ---------------------------------------------------------------------
   const GRASS_UNIT_BASE = 4;  // chunky pixel size for the ground texture
   const CLOUD_UNIT_BASE = 6;  // chunky pixel size for the cloud texture
   const CLOUD_SPEED_FACTOR = 0.10; // clouds move at 10% of the game scroll speed
   const SKY_COLOR = '#8fd3f0';
 
-  // 8-wide x 6-tall repeating ground tile (tiles seamlessly on X).
-  // Rows are ordered dirt -> grass so that the LAST row (solid, code 1) is the
-  // one drawn immediately against GROUND_Y — this guarantees an unbroken,
-  // gap-free contact line under the character's feet every column, satisfying
-  // the "never hover / never sink" rule regardless of tile phase.
+  // 8x6 repeating ground tile; rows run dirt -> grass with a solid row flush on GROUND_Y.
   const GRASS_TILE_REF = [
     [5,4,4,5,4,4,5,4],   // deep dirt shadow
     [4,3,4,4,3,4,4,3],   // dirt mid
@@ -279,19 +258,12 @@
   const SPIKE_W_BASE = SPIKE_REF[0].length * PIXEL_UNIT_BASE;   // 40
   const SPIKE_H_BASE = SPIKE_REF.length * PIXEL_UNIT_BASE;      // 30
   const BIRD_VIS_H_BASE = BIRD_REF.length * PIXEL_UNIT_BASE;    // 40  (visual height)
-  // v1.4: UNIFIED X-AXIS METRIC — lava, bird, and long_wall all share this
-  // exact same horizontal width (double the spike's), instead of each hazard
-  // computing its own independent width (bird's old BIRD_W_BASE and long_wall's
-  // old timing-derived width are both superseded by this single constant).
   const HAZARD_DOUBLE_W_BASE = SPIKE_W_BASE * 2; // 80
-  // v1.3: bird lowered to sit right at the standing player's head/upper-torso
-  // line (walking in = death; duck or jump clears it pixel-perfectly).
+  // Bird sits at the player's head/torso line — walking in is death, duck or jump clears it.
   const BIRD_BOTTOM_OFFSET_BASE = 30;
   const LONG_WALL_TOTAL_H_BASE = 200; // long_wall keeps a tall hitbox — duck is its only valid response
   const LONG_WALL_BOTTOM_OFFSET_BASE = 33;
-  // v1.4: cross time is now DERIVED from the unified width (previously the
-  // width was derived from a fixed cross time) — kept only to verify the duck
-  // duration below still safely covers it.
+  // Derived from the unified hazard width; kept to verify DUCK_DURATION safely covers it.
   const HAZARD_CROSS_TIME = HAZARD_DOUBLE_W_BASE / SCROLL_SPEED_BASE; // ≈0.308s
 
   // Same sampling rule used for both drawing AND hitboxing, so the two can
@@ -302,10 +274,7 @@
     return ref[rr][cc];
   }
 
-  // Draws a ref matrix into a target box. v1.5.4: removed the per-pixel black
-  // outline entirely — every active cell now paints one flat, solid fillRect
-  // that fully fills its (cw x ch) slot, so adjacent colored pixels touch
-  // seamlessly with no gaps or gridding.
+  // Draws a ref matrix into a target box; each active cell paints a flat fillRect so adjacent pixels touch with no gaps.
   function drawSpriteGrid(ctx2, ref, palette, x, y, w, h, unit, tileX, tileY) {
     const refRows = ref.length, refCols = ref[0].length;
     const cols = Math.max(1, Math.round(w / unit));
@@ -322,9 +291,7 @@
     }
   }
 
-  // PIXEL-PERFECT HITBOX (v1.3): scans the exact same sampled grid used for
-  // drawing and returns the tight AABB (real px) around the outermost drawn
-  // pixels — mathematically tied to SCALE + PIXEL_UNIT_BASE, no fudge factor.
+  // Pixel-perfect hitbox: scans the same sampled grid used for drawing and returns the tight AABB around the outermost drawn pixels.
   function spriteHitbox(ref, x, y, w, h, unit, tileX, tileY) {
     const refRows = ref.length, refCols = ref[0].length;
     const cols = Math.max(1, Math.round(w / unit));
@@ -378,18 +345,18 @@
 
   let player, obstacles, particles, score, scoreTimer, spawnTimer, beatHighScoreThisRun, flashTimer, ripPhrase, groundScrollX, cloudScrollX, blinkTimer, blinkOn, stepPhase;
 
-  // v1.6 — arcade state machine: menu, leaderboard, ranked game-over UI
+  // Arcade state machine: menu, leaderboard, ranked game-over UI
   let leaderboardData = [];
   let leaderboardStatus = 'idle'; // 'idle' | 'loading' | 'loaded'
   let playerRank = null;
   let nicknameInput = '';
   let nicknameSubmitted = false;
-  let isHighScoreEntry = false; // v1.8.1 — true only when the run cracked the Top 10
+  let isHighScoreEntry = false; // true only when the run cracked the Top 10
   let leaderboardBtnRect = null;
   let backToMenuRect = null;
-  let submitBtnRect = null; // v1.6.1 — on-screen [ SUBMIT ] tap target (mobile fix)
-  let skipBtnRect = null;   // v1.6.2 — on-screen [ SKIP TO MENU ] tap target (mobile fix)
-  let nicknameBoxRect = null; // v1.8.1 — arcade nickname input box tap target
+  let submitBtnRect = null; // on-screen [ SUBMIT ] tap target
+  let skipBtnRect = null;   // on-screen [ SKIP TO MENU ] tap target
+  let nicknameBoxRect = null; // arcade nickname input box tap target
 
   function resetPlayer() {
     player = {
@@ -421,7 +388,7 @@
   resetGame();
 
   // ---------------------------------------------------------------------
-  // v1.6 — SUPABASE LEADERBOARD (fetch/submit + fail-safe mock fallback)
+  // SUPABASE LEADERBOARD (fetch/submit + fail-safe mock fallback)
   // ---------------------------------------------------------------------
   const MOCK_LEADERBOARD = [
     { name: 'ACE', score: 128 },
@@ -479,9 +446,7 @@
     state = 'LEADERBOARD_SCREEN';
   }
 
-  // v1.8.1 — shared trigger for the Enter key AND the on-screen [ SUBMIT ]
-  // tap button, so both paths lock out multi-submits identically. Only fires
-  // while the qualification gate has flagged this run as a high-score entry.
+  // Shared trigger for the Enter key and the on-screen [ SUBMIT ] button; fires once this run qualifies as a high score.
   function submitNicknameIfReady() {
     if (state !== 'GAME_OVER' || !isHighScoreEntry || nicknameSubmitted) return;
     nicknameSubmitted = true;
@@ -491,8 +456,7 @@
     submitHighScore(finalName, score);
   }
 
-  // v1.6.2 — shared trigger for the Esc key AND the on-screen [ SKIP TO MENU ]
-  // tap button: clears the in-progress nickname state and routes to START_MENU.
+  // Shared trigger for the Esc key and the on-screen [ SKIP TO MENU ] button; clears nickname state and returns to START_MENU.
   function skipToMenu() {
     if (state !== 'GAME_OVER') return;
     hiddenInput.blur();
@@ -507,9 +471,7 @@
   // INPUT
   // ---------------------------------------------------------------------
 
-  // v1.8.1 — bulletproof invisible input overlay: focusing this real <input>
-  // (instead of faking a canvas caret) is what lets mobile browsers pop the
-  // soft keyboard open reliably, with no coordinate race conditions.
+  // Invisible input overlay — focusing this real <input> lets mobile browsers open the soft keyboard reliably.
   const hiddenInput = document.createElement('input');
   hiddenInput.type = 'text';
   hiddenInput.maxLength = 10;
@@ -572,12 +534,10 @@
     pointerStartY = e.clientY - rect.top;
     pointerStartT = performance.now();
 
-    // v1.8.1 — tapping in/near the arcade nickname box focuses the hidden
-    // input synchronously, on the same user gesture, so mobile soft
-    // keyboards open reliably.
+    // Tapping near the nickname box focuses the hidden input on the same gesture so mobile keyboards open reliably.
     if (state === 'GAME_OVER' && isHighScoreEntry && pointInRect(pointerStartX, pointerStartY, nicknameBoxRect)) {
       hiddenInput.value = nicknameInput;
-      hiddenInput.focus(); // Synchronous direct execution pops up mobile keyboards perfectly
+      hiddenInput.focus();
     }
   });
 
@@ -606,14 +566,12 @@
       return;
     }
     if (state === 'GAME_OVER') {
-      // v1.6.1 — mobile fix: tapping the on-screen [ SUBMIT ] button now
-      // triggers the exact same routine as pressing Enter.
+      // Tapping [ SUBMIT ] triggers the same routine as pressing Enter.
       if (pointInRect(endX, endY, submitBtnRect)) {
         submitNicknameIfReady();
         return;
       }
-      // v1.6.2 — mobile fix: tapping the on-screen [ SKIP TO MENU ] button
-      // triggers the exact same routine as pressing Escape.
+      // Tapping [ SKIP TO MENU ] triggers the same routine as pressing Escape.
       if (pointInRect(endX, endY, skipBtnRect)) {
         skipToMenu();
         return;
@@ -629,10 +587,8 @@
   });
 
   window.addEventListener('keydown', (e) => {
-    // v1.8.1 — GAME_OVER: free-text nickname entry (up to 10 chars), gated
-    // by isHighScoreEntry so keystrokes only register once the qualification
-    // check has actually cleared this run for the Top 10. Enter submits via
-    // submitHighScore(), Esc skips back to the menu.
+    // GAME_OVER: free-text nickname entry (up to 10 chars), gated by isHighScoreEntry.
+    // Enter submits via submitHighScore(); Esc returns to the menu.
     if (state === 'GAME_OVER' && isHighScoreEntry) {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -744,27 +700,19 @@
       const w = SPIKE_W_BASE * s, h = SPIKE_H_BASE * s;
       obstacles.push({ type: 'spike', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.55) {
-      // ORANGE LAVA — swipe up. Height is a locked, static value; width is the
-      // unified hazard width (v1.4).
+      // ORANGE LAVA — swipe up; height is fixed, width is the unified hazard width.
       const w = HAZARD_DOUBLE_W_BASE * s;
       const h = 24 * s;
       obstacles.push({ type: 'lava', x: W + w, w, top: groundY - h, h });
     } else if (roll < 0.80) {
-      // BLUE BIRD — lowered to the player's head/upper-torso line. Width is
-      // now the same unified hazard width as lava/long_wall (v1.4); the sprite
-      // stretch-samples cleanly to fill it (see drawObstacles). Pixel-perfect
-      // hitbox trims its empty bottom padding row automatically, so walking
-      // straight in = death; duck or jump clears.
+      // BLUE BIRD — sits at head/torso height; width matches the unified hazard width.
+      // Walking into it is death; duck or jump clears it.
       const w = HAZARD_DOUBLE_W_BASE * s;
       const h = BIRD_VIS_H_BASE * s;
       const bottomOffset = BIRD_BOTTOM_OFFSET_BASE * s;
       obstacles.push({ type: 'bird', x: W + w, w, top: groundY - bottomOffset - h, h });
     } else {
-      // BLUE LONG WALL — duck only (tall hitbox retained, jump can never clear
-      // it). Width is now the same unified hazard width as lava/bird (v1.4) —
-      // exactly 2 brick tiles, no partial tile at the edge. DUCK_DURATION above
-      // is verified to safely exceed HAZARD_CROSS_TIME plus the duck box's own
-      // width, so standing/jumping back up early still overlaps and dies.
+      // BLUE LONG WALL — duck only; the tall hitbox means jump can never clear it.
       const w = HAZARD_DOUBLE_W_BASE * s;
       const totalH = LONG_WALL_TOTAL_H_BASE * s;
       const bottomOffset = LONG_WALL_BOTTOM_OFFSET_BASE * s;
@@ -773,16 +721,13 @@
   }
 
   function spawnIntervalForScore(sc) {
-    return Math.max(SPAWN_MIN_INTERVAL, SPAWN_BASE_INTERVAL - sc * SPAWN_RAMP_RATE) ;
+    return Math.max(SPAWN_MIN_INTERVAL, SPAWN_BASE_INTERVAL - sc * SPAWN_RAMP_RATE);
   }
 
   // ---------------------------------------------------------------------
   // COLLISION
   // ---------------------------------------------------------------------
-  // v1.3: exact drawn bounds, no shrink — matches the rounded-rect body drawn
-  // in drawPlayer() at PLAYER_STAND_W/H or PLAYER_DUCK_W/H, scaled by SCALE.
-  // (Transient landing "squish" is cosmetic only and intentionally excluded
-  // so the hitbox never wobbles mid-collision.)
+  // Matches the rounded-rect body drawn in drawPlayer(); landing squish is cosmetic and excluded so the hitbox never wobbles.
   function playerHitbox() {
     const groundY = H - BANNER_H;
     const cx = W * PLAYER_X_FRAC;
@@ -796,9 +741,7 @@
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   }
 
-  // v1.3: pixel-perfect — reads the obstacle's own sprite definition and
-  // scans its actually-drawn pixels (see spriteHitbox()) instead of applying
-  // an arbitrary shrink percentage.
+  // Pixel-perfect: reads the obstacle's sprite definition and scans its drawn pixels (see spriteHitbox()).
   function obstacleHitbox(o) {
     const def = OBSTACLE_SPRITES[o.type];
     return spriteHitbox(def.ref, o.x, o.top, o.w, o.h, pixelUnit(), def.tileX, def.tileY);
@@ -818,8 +761,7 @@
       highScore = score;
       try { localStorage.setItem(HIGH_SCORE_KEY, String(highScore)); } catch (e) {}
     }
-    // v1.8.1 — reset nickname state, fetch the live Top 10 cache, then run
-    // the strict qualification gate entirely in-canvas (no window.prompt()).
+    // Reset nickname state, fetch the live Top 10, then run the qualification gate in-canvas.
     nicknameInput = '';
     nicknameSubmitted = false;
     isHighScoreEntry = false;
@@ -830,12 +772,10 @@
       const qualifies = top10.length < 10 || score > top10[9].score;
 
       if (qualifies) {
-        // CONDITION A — Qualified: stay on GAME_OVER and flip on the arcade
-        // text-entry box drawing loop.
+        // Qualified: stay on GAME_OVER and show the nickname entry box.
         isHighScoreEntry = true;
       } else {
-        // CONDITION B — Did not qualify: bypass the typing screen entirely
-        // and route straight to the leaderboard matrix.
+        // Not qualified: skip nickname entry and go straight to the leaderboard.
         isHighScoreEntry = false;
         nicknameSubmitted = true;
         state = 'LEADERBOARD_SCREEN';
@@ -847,9 +787,7 @@
     groundScrollX -= SCROLL_SPEED_BASE * SCALE * dt;
     if (groundScrollX < -40 * SCALE) groundScrollX += 40 * SCALE;
 
-    // v1.5: background cloud layer scrolls at 10% of the ground/obstacle
-    // speed for the parallax depth illusion — always runs (ready/dead too),
-    // same as groundScrollX above.
+    // Cloud layer scrolls at 10% of ground speed for the parallax effect; runs in every state.
     cloudScrollX -= SCROLL_SPEED_BASE * SCALE * CLOUD_SPEED_FACTOR * dt;
 
     blinkTimer -= dt;
@@ -919,8 +857,7 @@
   // ---------------------------------------------------------------------
   // DRAW
   // ---------------------------------------------------------------------
-  // v1.5: sky-blue backdrop + slow parallax pixel-cloud layer (10% speed),
-  // replaces the old dark bg + arcade grid.
+  // Sky-blue backdrop with a slow parallax pixel-cloud layer (10% speed).
   function drawBackground() {
     const skyH = H - BANNER_H;
     ctx.fillStyle = SKY_COLOR;
@@ -929,21 +866,15 @@
     const unit = CLOUD_UNIT_BASE * SCALE;
     const tileW = CLOUD_TILE_REF[0].length * unit;
     const bandH = CLOUD_TILE_REF.length * unit;
-    const cloudTop = skyH * 0.15; // Lowered from 0.08 to 0.15
+    const cloudTop = skyH * 0.15;
     const offset = ((cloudScrollX % tileW) + tileW) % tileW;
     const drawW = W + tileW * 2;
     drawSpriteGrid(ctx, CLOUD_TILE_REF, CLOUD_PALETTE, offset - tileW, cloudTop, drawW, bandH, unit, true, false, true);
   }
 
-  // v1.5: foreground repeating grass/dirt pixel texture, scrolling at 100% of
-  // game speed (shares groundScrollX with the obstacle/ground scroll rate) so
-  // the character reads as anchored to the earth. The band is drawn directly
-  // ABOVE GROUND_Y (i.e. y in [groundY-bandH, groundY]) rather than below it,
-  // because the ad banner is painted immediately after this call and fully
-  // covers everything at y >= groundY — drawing downward would leave the
-  // whole texture invisible. The tile's solid bottom row lands EXACTLY on
-  // groundY, which is the same coordinate playerHitbox()/drawPlayer() use as
-  // the character's feet contact line, so there is no hover/sink gap.
+  // Foreground grass/dirt texture, scrolling at 100% of game speed (shares groundScrollX).
+  // Drawn just above GROUND_Y — the ad banner paints after this and covers y >= GROUND_Y.
+  // The tile's solid bottom row sits exactly on GROUND_Y, matching playerHitbox()'s contact line.
   function drawGround() {
     const groundY = H - BANNER_H;
     const unit = GRASS_UNIT_BASE * SCALE;
@@ -976,10 +907,6 @@
     }
   }
 
-  // TEMPORARY (v1.3) — neon-green outline of every live hitbox, computed via
-  // the exact same playerHitbox()/obstacleHitbox() the collision loop uses,
-  // so what you see is what actually kills you. Flip DEBUG_HITBOXES off above
-  // once verified.
   function drawDebugHitboxes() {
     if (!DEBUG_HITBOXES) return;
     ctx.save();
@@ -1075,8 +1002,7 @@
     ctx.fillText('BEST ' + Math.max(highScore, score), W / 2, 48 * s);
   }
 
-  // v1.6 — RETRO ARCADE START MENU. Static beautiful menu w/ flashing prompt
-  // and a bounded tap-zone button that opens the global leaderboard.
+  // Start menu: flashing prompt plus a tap-zone button that opens the global leaderboard.
   function drawStartMenu() {
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.fillRect(0, 0, W, H - BANNER_H);
@@ -1098,7 +1024,7 @@
       ctx.fillText('TAP SCREEN OR PRESS SPACE TO START', W / 2, H * 0.44);
     }
 
-    ctx.fillStyle = '#1a1a1a'; // Deep high-contrast charcoal black for absolute readability
+    ctx.fillStyle = '#1a1a1a'; // high-contrast for readability
     ctx.font = `${Math.max(10, 12 * SCALE)}px 'Courier New', monospace`;
     ctx.fillText('SWIPE UP: JUMP', W / 2, H * 0.52);
     ctx.fillText('SWIPE DOWN: DUCK / FAST-FALL', W / 2, H * 0.52 + 18 * SCALE);
@@ -1121,8 +1047,7 @@
     ctx.textBaseline = 'alphabetic';
   }
 
-  // v1.6 — GLOBAL LEADERBOARD SCREEN. Centered glowing RANK|NAME|SCORE table
-  // fed by fetchLeaderboard(); [ BACK TO MENU ] returns to START_MENU.
+  // Leaderboard screen: RANK|NAME|SCORE table fed by fetchLeaderboard(); [ BACK TO MENU ] returns to START_MENU.
   function drawLeaderboardScreen() {
     ctx.fillStyle = 'rgba(0,0,0,0.72)';
     ctx.fillRect(0, 0, W, H - BANNER_H);
@@ -1137,9 +1062,8 @@
     const rowH = 30 * SCALE;
     const headerY = H * 0.22;
 
-    // v1.8.2 — solid container fill so scrolling background/parallax assets
-    // can no longer bleed through the rows behind the table.
-    ctx.fillStyle = '#000000'; // Pure arcade black background overlay
+    // Solid fill prevents the scrolling background from bleeding through the table rows.
+    ctx.fillStyle = '#000000';
     ctx.fillRect(tableX, headerY, tableW, rowH * 11);
 
     ctx.save();
@@ -1175,7 +1099,7 @@
       }
       rows.forEach((row, i) => {
         const ry = headerY + rowH * (i + 1) + rowH / 2;
-        // v1.8 — neon arcade rank tiers by row index.
+        // Neon rank-tier colors by row index.
         let rowColor = '#3bff6e'; // Default Neon Green for ranks 7-10
         if (i === 0) rowColor = '#ff0055';           // 1st Place: Hot Pink
         else if (i === 1 || i === 2) rowColor = '#ff9800'; // 2nd & 3rd: Neon Orange/Gold
@@ -1203,8 +1127,7 @@
     ctx.textBaseline = 'alphabetic';
   }
 
-  // v1.6 — RANKED GAME OVER STATE. Shows score + live global placement, then
-  // a typed nickname prompt; Enter -> submitHighScore() -> LEADERBOARD_SCREEN.
+  // Game-over state: shows score + global placement, then a nickname prompt (Enter -> submitHighScore() -> LEADERBOARD_SCREEN).
   function drawGameOverScreen() {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, W, H - BANNER_H);
@@ -1237,7 +1160,7 @@
     const boxW = W * 0.55, boxH = 34 * SCALE;
     const boxX = W / 2 - boxW / 2;
     const inputY = boxY + 14 * SCALE;
-    nicknameBoxRect = { x: boxX, y: inputY, w: boxW, h: boxH }; // v1.8.1 — tap target for hiddenInput focus
+    nicknameBoxRect = { x: boxX, y: inputY, w: boxW, h: boxH }; // tap target for hiddenInput focus
     ctx.strokeStyle = '#3bff6e';
     ctx.lineWidth = 2 * SCALE;
     ctx.strokeRect(boxX, inputY, boxW, boxH);
@@ -1250,9 +1173,7 @@
     ctx.fillText(displayName || ' ', W / 2, inputY + boxH / 2 + 1);
     ctx.textBaseline = 'alphabetic';
 
-    // v1.6.1/1.6.2 — on-screen [ SUBMIT ] + [ SKIP TO MENU ] buttons, side by
-    // side (mobile touch fix: neither Enter nor Escape can be sent from a
-    // touchscreen, so both actions need bounded tap zones).
+    // On-screen [ SUBMIT ] + [ SKIP TO MENU ] buttons — touchscreens can't send Enter/Escape, so both need tap zones.
     const btnGap = 10 * SCALE;
     const pairW = W * 0.62;
     const submitBtnW = pairW * 0.46, skipBtnW = pairW * 0.54, btnH = 36 * SCALE;
