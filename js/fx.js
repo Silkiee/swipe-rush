@@ -32,7 +32,7 @@ function screenFlash(rgb, dur) { flashColor = rgb; flashDur = dur; flashT = dur;
 // PARTICLES
 // ---------------------------------------------------------------------
 function spawnDust(n) {
-  const px = W * PLAYER_X_FRAC;
+  const px = runnerX();
   for (let i = 0; i < n; i++) {
     particles.push({
       x: px - 6 * SCALE + (Math.random() - 0.5) * 10 * SCALE, y: GROUND - 4 * SCALE,

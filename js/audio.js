@@ -37,10 +37,22 @@ function ensureAudio() {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     pulse25 = makePulseWave(0.25);
     pulse12 = makePulseWave(0.125);
-  } else if (actx.state === 'suspended') {
-    actx.resume();
   }
+  // A context made outside a user gesture starts suspended; resume() is only honoured inside one.
+  if (actx.state === 'suspended' || actx.state === 'interrupted') actx.resume().catch(() => {});
 }
+
+// Browsers only unlock audio on a "user activation" event. On touch screens that is the finger
+// LIFT (pointerup / touchend / click), not pointerdown, which is why the first tap used to leave the
+// music silent until the mute button (handled on lift) was toggled. Try on load (some browsers
+// allow it), then retry on every activation event until the context is running.
+function unlockAudio() {
+  ensureAudio();
+  if (actx && typeof state !== 'undefined' && state !== 'GAME_OVER' && !musicPlaying()) musicStart();
+}
+['pointerup', 'touchend', 'click', 'keydown'].forEach((ev) =>
+  window.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+document.addEventListener('visibilitychange', () => { if (!document.hidden && actx) ensureAudio(); });
 
 function audioReady() { return actx && actx.state === 'running'; }
 
@@ -93,6 +105,7 @@ function sfxDuck()     { noise(0.12, 0.22, 'bandpass', 1400, 0, null, 500); tone
 function sfxFastFall() { noise(0.14, 0.25, 'bandpass', 3000, 0, null, 300); tone(520, 90, 0.12, 'sawtooth', 0.12); tone(70, 40, 0.12, 'sine', 0.35, 0.1); }
 function sfxStart()    { tone(988, 988, 0.07, 'square', 0.12); tone(1319, 1319, 0.22, 'square', 0.12, 0.07); }
 function sfxUiBlip()   { tone(880, 1320, 0.05, 'pulse25', 0.1); }
+function sfxCountBeep() { tone(659, 659, 0.12, 'square', 0.12); tone(1319, 1319, 0.05, 'pulse25', 0.04); }
 function sfxTitleSlam() { tone(200, 50, 0.3, 'square', 0.16); tone(900, 1500, 0.14, 'triangle', 0.08); noise(0.35, 0.2, 'lowpass', 3000, 0, null, 200); }
 
 // Each cleared obstacle ticks up a pentatonic ladder so long combos "climb".

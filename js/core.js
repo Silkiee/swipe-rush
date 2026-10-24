@@ -68,6 +68,12 @@ const JUMP_VELOCITY = -760;
 const DUCK_DURATION = 0.6;          // seconds — minimum duck for a quick flick; holding keeps you down
 
 const PLAYER_X_FRAC = 0.22;         // fixed horizontal position, fraction of W
+const COUNTDOWN_FULL = 3.0;          // s — 3-2-1 before a run started from the title / How to Play
+const COUNTDOWN_RETRY = 1.5;         // s — READY... before a PLAY AGAIN run, so retries stay snappy
+const GLIDE_TIME = 1.2;              // s — runner glides from the title's centre spot to its run position
+const GO_SHOW = 0.7;                 // s — how long GO!! stays up once the run is live
+let runnerXOffset = 0;               // CSS px, non-zero only while gliding in
+function runnerX() { return W * PLAYER_X_FRAC + runnerXOffset; }
 const PLAYER_STAND_W = 40, PLAYER_STAND_H = 42;
 const PLAYER_DUCK_W = 50, PLAYER_DUCK_H = 24;
 const DEBUG_HITBOXES = false;

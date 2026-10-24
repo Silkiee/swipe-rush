@@ -18,6 +18,7 @@ let level = 1, speedNow = SCROLL_SPEED_BASE;   // speed level 1..4 and current s
 let downHeld = false;                          // finger / Down key still held after a swipe down (hold-to-duck)
 let runId = 0, pendingType = null, pendingAutoSave = null;
 let gameOverT = 0, lastDrawnState = null;
+let countdownT = 0, countdownDur = 0, glideIn = false, goT = -1, titleExitAt = -1; // pre-run countdown
 
 let leaderboardData = [];
 let leaderboardStatus = 'idle'; // 'idle' | 'loading' | 'loaded'
@@ -151,7 +152,7 @@ function playAgain() {
   nicknameSubmitted = false;
   isHighScoreEntry = false;
   ensureAudio();
-  startRun();
+  startRun(true);
 }
 
 function skipToMenu() {
@@ -218,12 +219,34 @@ function handleHowToTap(x, y, dx, dy) {
   if (pointInRect(x, y, howToBackRect)) { sfxUiBlip(); howToGo(-1); }
 }
 
-function startRun() {
+// Every run opens with a countdown: 3-2-1 from the title / How to Play (the runner glides from the
+// title's centre spot to its run position), a quick READY on PLAY AGAIN. Warm-up jumps and ducks
+// work; hazards, points and the run timer only start on GO!!.
+function startRun(retry) {
   runId++;
+  titleExitAt = state === 'START_MENU' ? performance.now() : -1;
   state = 'playing';
   resetGame();
-  sfxStart();
+  countdownDur = countdownT = retry ? COUNTDOWN_RETRY : COUNTDOWN_FULL;
+  glideIn = !retry;
+  runnerXOffset = glideIn ? W / 2 - W * PLAYER_X_FRAC : 0;
+  goT = -1;
+  sfxCountBeep();
   musicStart();
+}
+
+function updateCountdown(dt) {
+  const before = countdownT;
+  countdownT = Math.max(0, countdownT - dt);
+  const g = clamp01((countdownDur - countdownT) / GLIDE_TIME), ease = g * g * (3 - 2 * g);
+  runnerXOffset = glideIn ? (W / 2 - W * PLAYER_X_FRAC) * (1 - ease) : 0;
+  if (countdownDur === COUNTDOWN_FULL && countdownT > 0 && Math.ceil(countdownT) < Math.ceil(before)) sfxCountBeep(); // 2, 1 (READY beeps once)
+  if (countdownT === 0) {
+    runnerXOffset = 0;
+    lastActionT = -99;                // warm-up moves never count toward a timing bonus
+    goT = 0;
+    sfxStart();
+  }
 }
 
 function handleStartTap() {
@@ -514,7 +537,7 @@ function killPlayer() {
   state = 'GAME_OVER';
   gameOverT = 0;
   ripPhrase = pick(RIP_PHRASES);
-  const cx = W * PLAYER_X_FRAC;
+  const cx = runnerX();
   spawnDeathDebris(cx, GROUND + player.y - 15 * SCALE);
   const crash = cached('kana|crash', () => bakeKanaText('ガシャーン!!', Math.round(24 * SCALE * DPR), ['#ffffff', PAL.gold, PAL.coral], PAL.tomato));
   showBanner(crash, null, Math.min(W * 0.62, cx + 90 * SCALE), GROUND + player.y - 70 * SCALE, 1.1);
@@ -552,6 +575,25 @@ function killPlayer() {
 // ---------------------------------------------------------------------
 // UPDATE
 // ---------------------------------------------------------------------
+// Runner gravity, landing and hold-to-duck (shared by the countdown warm-up and the run).
+function updatePlayerPhysics(dt) {
+  if (!player.onGround) {
+    player.vy += GRAVITY * SCALE * dt;
+    player.y += player.vy * dt;
+    if (player.y >= 0) {
+      player.y = 0; player.vy = 0; player.onGround = true; player.squish = 1;
+      spawnDust(4);
+    }
+  }
+  if (player.squish > 0) player.squish -= dt * 4;
+  // hold-to-duck: a flick ducks for DUCK_DURATION; keeping the finger / Down key held keeps you down
+  if (downHeld && player.onGround && !player.ducking) { player.ducking = true; player.duckTimer = 0; } // e.g. after a fast-fall
+  if (player.ducking) {
+    player.duckTimer -= dt;
+    if (player.duckTimer <= 0 && !downHeld) player.ducking = false;
+  }
+}
+
 function update(dt) {
   updateWorld(dt, state !== 'GAME_OVER');
   updateFx(dt);
@@ -570,8 +612,10 @@ function update(dt) {
   if (state === 'HOW_TO_PLAY') { howToT += dt; return; }
   if (state !== 'playing') return;
 
-  runTime += dt;
   stepPhase += dt * 10;
+  if (countdownT > 0) { updateCountdown(dt); updatePlayerPhysics(dt); return; }
+  if (goT >= 0) { goT += dt; if (goT > GO_SHOW) goT = -1; }
+  runTime += dt;
   if (recordFlashT > 0) recordFlashT -= dt;
 
   // speed level: steps up every LEVEL_SECONDS; the street eases up to the new speed
@@ -583,22 +627,7 @@ function update(dt) {
   scoreTimer += dt;
   while (scoreTimer >= 1) { scoreTimer -= 1; addScore(LEVEL_POINTS[level - 1]); }
 
-  // player physics
-  if (!player.onGround) {
-    player.vy += GRAVITY * SCALE * dt;
-    player.y += player.vy * dt;
-    if (player.y >= 0) {
-      player.y = 0; player.vy = 0; player.onGround = true; player.squish = 1;
-      spawnDust(4);
-    }
-  }
-  if (player.squish > 0) player.squish -= dt * 4;
-  // hold-to-duck: a flick ducks for DUCK_DURATION; keeping the finger / Down key held keeps you down
-  if (downHeld && player.onGround && !player.ducking) { player.ducking = true; player.duckTimer = 0; } // e.g. after a fast-fall
-  if (player.ducking) {
-    player.duckTimer -= dt;
-    if (player.duckTimer <= 0 && !downHeld) player.ducking = false;
-  }
+  updatePlayerPhysics(dt);
 
   // spawn obstacles
   spawnTimer -= dt;
@@ -659,10 +688,15 @@ function draw() {
   ctx.restore();
 
   drawCrtOverlay(PLAY_H);
+  if (state === 'playing' && titleExitAt >= 0) {
+    const p = (performance.now() - titleExitAt) / 450;
+    if (p < 1) drawTitleExit(p); else titleExitAt = -1;
+  }
   if (state === 'playing' || state === 'GAME_OVER') {
     drawCallouts();
     drawHud(t);
   }
+  if (state === 'playing') drawCountdown();
   drawFlash(PLAY_H);
   if (state === 'GAME_OVER') drawGameOverScreen(gameOverT);
   if (state === 'LEADERBOARD_SCREEN') drawLeaderboardScreen(leaderboardT);
@@ -684,4 +718,5 @@ function loop(now) {
 }
 
 resize();
+unlockAudio(); // plays at once where the browser allows it; otherwise the first tap / key unlocks it
 requestAnimationFrame(loop);

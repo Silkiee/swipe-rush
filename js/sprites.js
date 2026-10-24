@@ -20,7 +20,7 @@ function obstacleHitbox(o) {
 
 // Matches the body drawn in drawPlayer(); landing squish is cosmetic and excluded so the hitbox never wobbles.
 function playerHitbox() {
-  const cx = W * PLAYER_X_FRAC;
+  const cx = runnerX();
   const w = (player.ducking ? PLAYER_DUCK_W : PLAYER_STAND_W) * SCALE;
   const h = (player.ducking ? PLAYER_DUCK_H : PLAYER_STAND_H) * SCALE;
   const bottom = GROUND + player.y; // player.y is <=0 when airborne
@@ -32,7 +32,7 @@ function playerHitbox() {
 // ---------------------------------------------------------------------
 function drawPlayer(t) {
   const s = SCALE;
-  const cx = W * PLAYER_X_FRAC;
+  const cx = runnerX();
   const squish = Math.max(0, player.squish);
   let w, h;
   if (player.ducking) { w = PLAYER_DUCK_W * s; h = PLAYER_DUCK_H * s; }

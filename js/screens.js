@@ -61,7 +61,7 @@ function drawSparkle(x, y, size, color) {
 }
 
 // =====================================================================
-// TITLE SCREEN — city-pop sunset over a rushing checkerboard
+// TITLE SCREEN — the logo over the same Neon Tokyo street the run takes place on
 // =====================================================================
 function getTitleCache() {
   return cached('title', () => {
@@ -71,8 +71,6 @@ function getTitleCache() {
       swipe: bakeLogoWord('SWIPE', uDev, ['#ffffff', '#bffcff', '#35d6e8', '#1466c8'], '#0b2a66'),
       rush: bakeLogoWord('RUSH!!', uDev, ['#fff8e6', '#ffe14d', '#ff7a2f', '#e8283c'], '#7a1420'),
       kata: bakeKanaPlate('スワイプ・ラッシュ', Math.round(17 * SCALE * DPR), PAL.tomato, PAL.cream, '#ffffff'),
-      sun: bakeSun(Math.round(W * 0.30 * DPR)),
-      stars: (() => { const r = seededRandom(7), a = []; for (let i = 0; i < 38; i++) a.push({ x: r(), y: r(), ph: r() * 6.28, big: r() < 0.25 }); return a; })(),
       scratch: makeCanvas(1, 1),
     };
   });
@@ -93,37 +91,6 @@ function drawLogoGlint(tc, word, cx, top, p) {
   g.closePath(); g.fill();
   g.globalCompositeOperation = 'source-over';
   drawBaked(sc, cx, top, 1, true);
-}
-
-// Checkerboard floor rushing toward the viewer, fading into the horizon haze.
-function drawTitleFloor(yH, PH, t) {
-  const cx = W / 2, depthPx = PH - yH, tileW = W / 5;
-  const travel = t * 3.2, frac = travel % 1, flip = Math.floor(travel) % 2;
-  const yAt = (z) => yH + depthPx / z;
-  ctx.fillStyle = '#0d2a5c';
-  ctx.fillRect(0, yH, W, depthPx + 20);
-  ctx.fillStyle = '#1d5fa8';
-  ctx.beginPath();
-  for (let k = 0; k < 18; k++) {
-    const zA = 0.55 + k - frac, zB = zA + 1;
-    if (zA <= 0.05) continue;
-    const yA = yAt(zA), yB = yAt(zB);
-    const span = Math.ceil((W / 2) * zB / tileW) + 1;
-    for (let j = -span; j < span; j++) {
-      if (((k + j + flip) & 1) !== 0) continue;
-      ctx.moveTo(cx + j * tileW / zA, yA);
-      ctx.lineTo(cx + (j + 1) * tileW / zA, yA);
-      ctx.lineTo(cx + (j + 1) * tileW / zB, yB);
-      ctx.lineTo(cx + j * tileW / zB, yB);
-      ctx.closePath();
-    }
-  }
-  ctx.fill();
-  const haze = ctx.createLinearGradient(0, yH, 0, yH + depthPx * 0.45);
-  haze.addColorStop(0, 'rgba(255,170,120,0.85)'); haze.addColorStop(1, 'rgba(255,170,120,0)');
-  ctx.fillStyle = haze; ctx.fillRect(0, yH, W, depthPx * 0.45);
-  ctx.fillStyle = PAL.cream;
-  ctx.fillRect(0, yH - Math.max(1, SCALE), W, Math.max(2, 2 * SCALE));
 }
 
 // The runner sprinting in place, with motion streaks and kicked-up dust.
@@ -181,6 +148,21 @@ function startTitleIntro() { titleT0 = performance.now(); titleSlamPlayed = fals
 function titleIntroActive() { return state === 'START_MENU' && (performance.now() - titleT0) / 1000 < TITLE_INTRO_DONE; }
 function skipTitleIntro() { titleT0 = performance.now() - TITLE_INTRO_DONE * 1000; titleSlamPlayed = true; }
 
+// Soft navy veil so the title text and buttons stay readable over the busy city: light behind
+// the subtitle and TAP TO START, deeper behind the controls text and buttons. The road stays clear.
+function drawTitleVeil(subY, tapY, c1, roadTop) {
+  const S = SCALE, top = subY - 26 * S;
+  const v = ctx.createLinearGradient(0, top, 0, roadTop);
+  const at = (y) => clamp01((y - top) / (roadTop - top));
+  v.addColorStop(0, 'rgba(8,20,51,0)');
+  v.addColorStop(at(subY - 8 * S), 'rgba(8,20,51,0.26)');
+  v.addColorStop(at(tapY + 24 * S), 'rgba(8,20,51,0.16)');
+  v.addColorStop(at(c1 - 18 * S), 'rgba(8,20,51,0.46)');
+  v.addColorStop(1, 'rgba(8,20,51,0.4)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0, top, W, roadTop - top);
+}
+
 function drawStartMenu() {
   const tc = getTitleCache();
   const now = performance.now();
@@ -196,7 +178,12 @@ function drawStartMenu() {
   const rushTop = logoTop + 8.3 * u - tc.rush.pad / DPR;
   const logoBottom = logoTop + 16.3 * u;
   const subY = logoBottom + 16 * S;
-  const horizon = Math.max(subY + 40 * S, PH * 0.6);
+  // lower stack sits above the road so the mascot can run on it, exactly like a run
+  const roadTop = horizonY(), mascotGround = GROUND - 3 * S;
+  const footY = roadTop - 34 * S;
+  const btnH = 38 * S, btnY = footY - 16 * S - btnH;
+  const c3 = btnY - 18 * S, c2 = c3 - 17 * S, c1 = c2 - 17 * S;
+  const gapTop = subY + 34 * S, tapY = gapTop + (c1 - 14 * S - gapTop) / 2;
 
   // intro timeline
   const pKata = clamp01(t / 0.35);
@@ -215,26 +202,11 @@ function drawStartMenu() {
   if (shakeAmt) ctx.translate((Math.random() - 0.5) * 2 * shakeAmt, (Math.random() - 0.5) * 2 * shakeAmt);
   ctx.imageSmoothingEnabled = false;
 
-  // sunset sky + stars
-  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
-  sky.addColorStop(0, '#081433'); sky.addColorStop(0.45, '#123f73');
-  sky.addColorStop(0.78, '#e8796a'); sky.addColorStop(1, '#ffd59a');
-  ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, horizon + 20);
-  for (const st of tc.stars) {
-    const tw = 0.5 + 0.5 * Math.sin(t * 2.4 + st.ph);
-    ctx.fillStyle = `rgba(255,248,230,${0.25 + tw * 0.75})`;
-    const sz = Math.max(1, Math.round((st.big ? 2 : 1) * S));
-    ctx.fillRect(Math.round(st.x * W), Math.round(st.y * horizon * 0.5), sz, sz);
-  }
-
-  // setting sun behind Mt. Fuji
-  const pulse = 1 + Math.sin(t * 2) * 0.015, sunR = W * 0.30;
-  const sw = tc.sun.width / DPR * pulse, sh = tc.sun.height / DPR * pulse;
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(tc.sun, W / 2 - sw / 2, horizon - sunR * 0.55 - sh / 2, sw, sh);
-  ctx.imageSmoothingEnabled = false;
-  drawFuji(W / 2, horizon, W * 0.26, W * 0.62);
-  drawTitleFloor(horizon, PH, t);
+  // the same Neon Tokyo street as the run (scrolls at Level 1 speed via updateWorld)
+  ctx.fillStyle = PAL.ink; ctx.fillRect(-20, -20, W + 40, PH + 40); // covers edges during the slam shake
+  drawWorld(now / 1000);
+  drawTitleVeil(subY, tapY, c1, roadTop);
+  drawTitleMascot(W / 2, mascotGround, t);
 
   // speed lines (the "rush")
   if (Math.random() < dt * 12) {
@@ -281,17 +253,6 @@ function drawStartMenu() {
   drawPixelLine('- HOW FAR CAN YOU RUN? -', W / 2, subY, small, PAL.aquaPale, NAVY, null);
   drawPixelLine('BEST SCORE ' + highScore, W / 2, subY + 22 * S, mid, PAL.gold, NAVY, '#c21f33');
 
-  const footY = PH - 12 * S;
-  const btnH = 38 * S, btnW = W * 0.64;
-  const btnX = W / 2 - btnW / 2, btnY = footY - 18 * S - btnH;
-  const c3 = btnY - 18 * S, c2 = c3 - 17 * S, c1 = c2 - 17 * S;
-  const gapTop = Math.max(subY + 34 * S, horizon + 8 * S), gap = c1 - 14 * S - gapTop;
-  let tapY = gapTop + gap / 2;
-  if (gap > 120 * S) {
-    const mascotGround = gapTop + gap * 0.52;
-    drawTitleMascot(W / 2, mascotGround, t);
-    tapY = mascotGround + (gap * 0.48) / 2 + 2 * S;
-  }
   if ((t % 1.0) < 0.68) {
     const hop = Math.abs(Math.sin(t * Math.PI * 2)) * -3 * S;
     drawPixelLine('TAP TO START', W / 2, tapY + hop, 3 * S, '#ffffff', NAVY, PAL.coral);
@@ -307,12 +268,55 @@ function drawStartMenu() {
   leaderboardBtnRect = uiAlpha > 0.5 ? rankR : null;
   drawArcadeButton(howR, 'HOW TO PLAY', { unit: 1.8 * S, frame: PAL.aqua, key: PAL.coral });
   drawArcadeButton(rankR, 'RANKING', { unit: 1.8 * S });
-  drawPixelLine('(C) 2026 SILKIEE', W / 2, footY, small * 0.85, PAL.dusk, null, null);
+  drawPixelLine('(C) 2026 SILKIEE', W / 2, footY, small * 0.85, PAL.dusk, NAVY, null);
   drawMuteButton(W - 38 * S, 10 * S);
   ctx.globalAlpha = 1;
 
   if (flash > 0) { ctx.fillStyle = `rgba(255,248,230,${flash * 0.75})`; ctx.fillRect(-20, -20, W + 40, PH + 40); }
   ctx.restore();
+}
+
+// The title logo lifting away as a run starts from the menu (p: 0 -> 1 over ~0.45s).
+function drawTitleExit(p) {
+  const tc = getTitleCache(), PH = PLAY_H, u = tc.u, e = p * p;
+  const logoTop = PH * 0.17 - e * PH * 0.25;
+  ctx.globalAlpha = 1 - p;
+  drawBaked(tc.kata, W / 2, logoTop - tc.kata.height / DPR * 0.92, 1, true);
+  drawBaked(tc.swipe.canvas, W / 2 - W * 0.035, logoTop - tc.swipe.pad / DPR, 1, true);
+  drawBaked(tc.rush.canvas, W / 2 + W * 0.04, logoTop + 8.3 * u - tc.rush.pad / DPR, 1, true);
+  ctx.globalAlpha = 1;
+}
+
+// Big chrome 3-2-1 (or READY on a retry) that pops in, then GO!! with スタート!! once the run is live.
+function countdownArt(label, warm) {
+  return cached('cd|' + label, () => {
+    const uDev = Math.max(2, Math.round(Math.min(W * 0.62 / pixelTextWidth(label), 15 * SCALE) * DPR));
+    return warm ? bakeLogoWord(label, uDev, ['#fff8e6', '#ffe14d', '#ff7a2f', '#e8283c'], '#7a1420')
+                : bakeLogoWord(label, uDev, ['#ffffff', '#bffcff', '#35d6e8', '#1466c8'], '#0b2a66');
+  });
+}
+
+function drawCountdown() {
+  const cy = PLAY_H * 0.4;
+  if (countdownT > 0) {
+    const retry = countdownDur === COUNTDOWN_RETRY;
+    const label = retry ? 'READY' : String(Math.ceil(countdownT));
+    const f = retry ? (countdownDur - countdownT) / countdownDur : Math.ceil(countdownT) - countdownT; // 0 -> 1 per beat
+    const pop = 0.45 + 0.55 * easeOutBack(clamp01(f / 0.22));
+    ctx.globalAlpha = retry ? 1 : (f > 0.78 ? clamp01((1 - f) / 0.22) : 1);
+    drawBaked(countdownArt(label, false).canvas, W / 2, cy, pop, false);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  if (goT < 0) return;
+  const f = goT / GO_SHOW, pop = 0.5 + 0.5 * easeOutBack(clamp01(f / 0.25));
+  ctx.globalAlpha = f > 0.6 ? clamp01((1 - f) / 0.4) : 1;
+  const go = countdownArt('GO!!', true).canvas;
+  const rise = -f * 14 * SCALE;
+  drawBaked(go, W / 2, cy + rise, pop, false);
+  const kana = cached('kana|start', () => bakeKanaText('スタート!!', Math.round(22 * SCALE * DPR), ['#ffffff', '#7ff0ff', '#35d6e8'], PAL.cobalt));
+  drawBaked(kana, W / 2, cy + rise + go.height / DPR * pop * 0.5 + 4 * SCALE, pop, true);
+  ctx.globalAlpha = 1;
 }
 
 // =====================================================================
