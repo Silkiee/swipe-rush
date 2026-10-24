@@ -7,6 +7,9 @@
 
 // ---------------------------------------------------------------------
 // SUPABASE BACKEND (global leaderboard)
+// The publishable key below is the *public* client key: it is designed to ship in
+// browser code and is safe to commit. Access is enforced by the table's Row Level
+// Security policies (read + insert only). Never put a secret / service_role key here.
 // ---------------------------------------------------------------------
 const SUPABASE_URL = "https://twtxaaejhvkcyaamctjj.supabase.co/rest/v1/";
 const SUPABASE_KEY = "sb_publishable_dMSyw2pTB4Kl-phtVdmrXQ_0od7Z-A-";
@@ -24,6 +27,7 @@ let BANNER_H = 70, PLAY_H = 630;
 let GROUND = 630;      // feet line of the runner (top edge of the ad banner)
 
 function resize() {
+  const oldW = W, oldGround = GROUND, oldScale = SCALE;
   DPR = window.devicePixelRatio || 1;
   // Reserve a portrait-ish playing field, capped so it stays sane on wide desktop windows
   let w = container.clientWidth;
@@ -44,16 +48,24 @@ function resize() {
   BANNER_H = H * 0.10;
   PLAY_H = H - BANNER_H;
   GROUND = PLAY_H;
+  // let the game re-fit anything already in the world (e.g. hazards on screen when the phone rotates)
+  if (typeof onViewResize === 'function') onViewResize(oldW, oldGround, oldScale);
 }
 window.addEventListener('resize', resize);
 
 // ---------------------------------------------------------------------
 // GAME CONSTANTS (scaled by SCALE at use-time) — gameplay tuning is unchanged
 // ---------------------------------------------------------------------
-const SCROLL_SPEED_BASE = 260;      // px/s at SCALE=1 — LOCKED, never increases
+const SCROLL_SPEED_BASE = 260;      // px/s at SCALE=1 — level 1 speed
+
+// SPEED LEVELS — every LEVEL_SECONDS the street speeds up and survival pays more per second.
+const LEVEL_SECONDS = 15;
+const LEVEL_SPEEDS = [260, 283, 307, 330];  // px/s at SCALE=1 for levels 1..4 (top speed at ~1 min)
+const LEVEL_POINTS = [1, 2, 3, 4];          // survival points per second at each level
+const SPEED_EASE = 45;                      // px/s per second — how quickly a new level's speed is reached
 const GRAVITY = 2100;
 const JUMP_VELOCITY = -760;
-const DUCK_DURATION = 0.6;          // seconds — 36 frames @ 60fps
+const DUCK_DURATION = 0.6;          // seconds — minimum duck for a quick flick; holding keeps you down
 
 const PLAYER_X_FRAC = 0.22;         // fixed horizontal position, fraction of W
 const PLAYER_STAND_W = 40, PLAYER_STAND_H = 42;
@@ -62,7 +74,8 @@ const DEBUG_HITBOXES = false;
 
 const SPAWN_BASE_INTERVAL = 1.65;
 const SPAWN_MIN_INTERVAL = 0.68;
-const SPAWN_RAMP_RATE = 0.016;      // interval shrinks per point of score
+const SPAWN_RAMP_SECONDS = 60;      // interval shrinks with time survived, reaching the floor at ~1 min
+const FAIR_WINDOW = 0.15;           // s — every obstacle gap leaves at least this much timing window
 
 const SWIPE_THRESHOLD = 28;         // px at SCALE=1 — max travel that still counts as a tap
 const SWIPE_FIRE_DIST = 22;         // px at SCALE=1 — vertical travel that fires a swipe mid-gesture
@@ -85,7 +98,8 @@ const JUDGE_WINDOWS = [
   { max: 0.35, key: 'NICE',    bonus: 1 },
 ];
 
-const GAME_OVER_INPUT_DELAY = 0.8; // s — game over buttons ignore taps until the panel has settled
+const GAME_OVER_INPUT_DELAY = 0.8;
+const NET_TIMEOUT_MS = 4000;        // leaderboard requests give up after this and fall back // s — game over buttons ignore taps until the panel has settled
 const BIRD_JUMP_BONUS = 8;          // jumping clean over a crow drone (replaces NICE/GREAT/PERFECT)
 
 const HIGH_SCORE_KEY = 'swipeRushHighScore';

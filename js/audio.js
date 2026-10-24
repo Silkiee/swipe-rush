@@ -119,6 +119,8 @@ function sfxComboMilestone(n) {
   noise(0.45, 0.16, 'highpass', 5000, 0);
 }
 
+// Speed level up: quick rising sweep + sparkle.
+function sfxSpeedUp() { [72, 79, 84, 91].forEach((m, i) => tone(midiHz(m), midiHz(m + 5), 0.1, 'square', 0.09, i * 0.05)); noise(0.2, 0.06, 'highpass', 6000, 0.18); }
 function sfxHighScore() { [79, 84, 88, 91, 96].forEach((m, i) => tone(midiHz(m), 0, 0.16, 'pulse25', 0.12, i * 0.08)); }
 
 function sfxDeath() {

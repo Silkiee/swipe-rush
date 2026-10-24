@@ -242,7 +242,7 @@ function drawTile(tile, factor, y) {
 }
 
 function updateWorld(dt, moving) {
-  if (moving) worldScroll += SCROLL_SPEED_BASE * SCALE * dt;
+  if (moving) worldScroll += currentScrollSpeed() * dt; // follows the run's speed level
 }
 
 function drawWorld(t) {

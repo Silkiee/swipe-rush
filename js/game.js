@@ -14,6 +14,9 @@ try { highScore = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0; } cat
 let player, obstacles = [], score, scoreTimer, spawnTimer, beatHighScoreThisRun, recordFlashT, ripPhrase;
 let blinkTimer, blinkOn, stepPhase;
 let runTime = 0, lastActionT = -99, combo = 0;
+let level = 1, speedNow = SCROLL_SPEED_BASE;   // speed level 1..4 and current scroll speed (px/s @ SCALE 1)
+let downHeld = false;                          // finger / Down key still held after a swipe down (hold-to-duck)
+let runId = 0, pendingType = null, pendingAutoSave = null;
 let gameOverT = 0, lastDrawnState = null;
 
 let leaderboardData = [];
@@ -41,6 +44,7 @@ function resetGame() {
   blinkOn = false;
   stepPhase = 0;
   runTime = 0; lastActionT = -99; combo = 0;
+  level = 1; speedNow = LEVEL_SPEEDS[0]; downHeld = false; pendingType = null;
   resetFx();
 }
 resetGame();
@@ -53,17 +57,26 @@ const MOCK_LEADERBOARD = [
   { name: 'FOX', score: 61 }, { name: 'PIP', score: 45 },
 ];
 
+// fetch() with a hard timeout so a hanging network can never freeze the results screen.
+async function fetchWithTimeout(url, opts) {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), NET_TIMEOUT_MS) : null;
+  try { return await fetch(url, Object.assign({}, opts, ctl ? { signal: ctl.signal } : {})); }
+  finally { if (timer) clearTimeout(timer); }
+}
+
 async function fetchLeaderboard() {
   leaderboardStatus = 'loading';
   try {
-    const res = await fetch(`${SUPABASE_URL}leaderboard?select=name,score&order=score.desc&limit=10`,
+    const res = await fetchWithTimeout(`${SUPABASE_URL}leaderboard?select=name,score&order=score.desc&limit=10`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     leaderboardData = Array.isArray(data) && data.length ? data : MOCK_LEADERBOARD.slice();
   } catch (e) {
-    // FAIL-SAFE: network/DB unreachable — fall back to local mock data so the state machine never freezes.
-    leaderboardData = MOCK_LEADERBOARD.slice();
+    // FAIL-SAFE: network/DB unreachable — keep what we already have (incl. locally saved scores),
+    // and only fall back to mock data when there is nothing yet, so the state machine never freezes.
+    if (!leaderboardData.length) leaderboardData = MOCK_LEADERBOARD.slice();
   }
   leaderboardStatus = 'loaded';
 }
@@ -76,7 +89,7 @@ function computePlayerRank(sc) {
 
 async function submitHighScore(name, sc, showRanking = true) {
   try {
-    const res = await fetch(`${SUPABASE_URL}leaderboard`, {
+    const res = await fetchWithTimeout(`${SUPABASE_URL}leaderboard`, {
       method: 'POST',
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({ name, score: sc }),
@@ -129,6 +142,8 @@ function playAgain() {
   if (isHighScoreEntry && !nicknameSubmitted) {
     const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
     submitHighScore(finalName, score, false);
+  } else if (!rankCheckDone) {
+    pendingAutoSave = { run: runId, score }; // rank not known yet: save as ANON later if it makes the Top 10
   }
   hiddenInput.blur();
   hiddenInput.value = '';
@@ -171,11 +186,10 @@ function doDownAction() {
     addShake(2 * SCALE, 0.1);
     sfxFastFall();
   } else {
-    // a repeat swipe while already ducking extends the duck instead of being ignored
-    if (!player.ducking) sfxDuck();
+    // A repeat swipe extends the duck, but only the FIRST swipe counts for NICE/GREAT/PERFECT timing.
+    if (!player.ducking) { sfxDuck(); lastActionT = runTime; }
     player.ducking = true;
     player.duckTimer = DUCK_DURATION;
-    lastActionT = runTime;
   }
 }
 
@@ -205,6 +219,7 @@ function handleHowToTap(x, y, dx, dy) {
 }
 
 function startRun() {
+  runId++;
   state = 'playing';
   resetGame();
   sfxStart();
@@ -237,6 +252,7 @@ function swipeDirection(dx, dy) {
 }
 
 function fireSwipe(dir) {
+  downHeld = dir > 0;                 // swipe down + keep the finger down = stay ducked
   if (dir < 0) doJump(); else doDownAction();
   swipeFired = true;
   lastSwipeDir = dir;
@@ -268,12 +284,13 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 canvas.addEventListener('pointercancel', (e) => {
-  if (e.pointerId === pointerId) pointerActive = false;
+  if (e.pointerId === pointerId) { pointerActive = false; downHeld = false; }
 });
 
 canvas.addEventListener('pointerup', (e) => {
   if (!pointerActive || e.pointerId !== pointerId) return;
   pointerActive = false;
+  downHeld = false;                   // lifting the finger ends a held duck
   const [endX, endY] = canvasPoint(e);
   const dy = endY - pointerStartY, dx = endX - pointerStartX;
   const isTap = !swipeFired && Math.hypot(dx, dy) < SWIPE_THRESHOLD * SCALE;
@@ -326,7 +343,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // GAME_OVER outside the Top 10: Space / Enter = play again, Esc = back to menu.
-  if (state === 'GAME_OVER' && rankCheckDone && gameOverT > GAME_OVER_INPUT_DELAY) {
+  if (state === 'GAME_OVER' && gameOverT > GAME_OVER_INPUT_DELAY) {
     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); playAgain(); return; }
     if (e.key === 'Escape') { e.preventDefault(); skipToMenu(); return; }
   }
@@ -342,7 +359,9 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') state = 'START_MENU'; else howToGo(e.key === 'ArrowRight' ? 1 : -1);
   } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
     e.preventDefault();
+    if (e.repeat) return;             // auto-repeat while held is not a new swipe
     ensureAudio();
+    downHeld = state === 'playing';
     doDownAction();
   } else if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
@@ -350,32 +369,105 @@ window.addEventListener('keydown', (e) => {
     if (state === 'START_MENU') handleStartTap();
     else if (state === 'HOW_TO_PLAY') howToGo(1);
     else if (state === 'LEADERBOARD_SCREEN') state = 'START_MENU';
+    else if (state === 'playing' && e.key === ' ') doJump();
   }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') downHeld = false;
 });
 
 // ---------------------------------------------------------------------
 // OBSTACLES
 // ---------------------------------------------------------------------
-function spawnObstacle() {
-  const roll = Math.random(), s = SCALE;
-  const seed = (Math.random() * 1000) | 0;
-  if (roll < 0.30) {
-    const w = SPIKE_W_BASE * s, h = SPIKE_H_BASE * s;
-    obstacles.push({ type: 'spike', x: W + w, w, top: GROUND - h, h, seed });
-  } else if (roll < 0.55) {
-    const w = HAZARD_DOUBLE_W_BASE * s, h = PUDDLE_H_BASE * s;
-    obstacles.push({ type: 'lava', x: W + w, w, top: GROUND - h, h, seed });
-  } else if (roll < 0.80) {
-    const w = HAZARD_DOUBLE_W_BASE * s, h = BIRD_VIS_H_BASE * s;
-    obstacles.push({ type: 'bird', x: W + w, w, top: GROUND - BIRD_BOTTOM_OFFSET_BASE * s - h, h, seed });
-  } else {
-    const w = HAZARD_DOUBLE_W_BASE * s, totalH = LONG_WALL_TOTAL_H_BASE * s;
-    obstacles.push({ type: 'long_wall', x: W + w, w, top: GROUND - LONG_WALL_BOTTOM_OFFSET_BASE * s - totalH, h: totalH, seed });
-  }
+function pickObstacleType() {
+  const roll = Math.random();
+  return roll < 0.30 ? 'spike' : roll < 0.55 ? 'lava' : roll < 0.80 ? 'bird' : 'long_wall';
 }
 
-function spawnIntervalForScore(sc) {
-  return Math.max(SPAWN_MIN_INTERVAL, SPAWN_BASE_INTERVAL - sc * SPAWN_RAMP_RATE);
+function obstacleSize(type) {
+  const s = SCALE;
+  if (type === 'spike') return { w: SPIKE_W_BASE * s, h: SPIKE_H_BASE * s };
+  if (type === 'lava') return { w: HAZARD_DOUBLE_W_BASE * s, h: PUDDLE_H_BASE * s };
+  if (type === 'bird') return { w: HAZARD_DOUBLE_W_BASE * s, h: BIRD_VIS_H_BASE * s };
+  return { w: HAZARD_DOUBLE_W_BASE * s, h: LONG_WALL_TOTAL_H_BASE * s };
+}
+
+function spawnObstacle(type) {
+  const s = SCALE, { w, h } = obstacleSize(type);
+  const seed = (Math.random() * 1000) | 0;
+  let top = GROUND - h;
+  if (type === 'bird') top = GROUND - BIRD_BOTTOM_OFFSET_BASE * s - h;
+  if (type === 'long_wall') top = GROUND - LONG_WALL_BOTTOM_OFFSET_BASE * s - h;
+  obstacles.push({ type, x: W + 4 * s, w, top, h, seed }); // front edge just off-screen, whatever the width
+}
+
+function spawnIntervalForTime(t) {
+  const k = clamp01(t / SPAWN_RAMP_SECONDS);
+  return Math.max(SPAWN_MIN_INTERVAL, lerp(SPAWN_BASE_INTERVAL, SPAWN_MIN_INTERVAL, k));
+}
+
+// ---- FAIRNESS GUARD ------------------------------------------------
+// Every new hazard must leave a dodge window of at least FAIR_WINDOW seconds for a player who
+// cleared the previous one, at the fastest speed it can reach before arriving. Derived from the
+// jump arc and hitboxes, so a crash is always timing, never an impossible pattern.
+const isHighHazard = (type) => type === 'bird' || type === 'long_wall';
+
+// Times (s) after take-off during which the runner's feet are at least h px above the street.
+function jumpAboveWindow(h) {
+  const v0 = -JUMP_VELOCITY * SCALE, g = GRAVITY * SCALE, disc = v0 * v0 - 2 * g * h;
+  if (disc <= 0) return null;
+  const r = Math.sqrt(disc);
+  return [(v0 - r) / g, (v0 + r) / g];
+}
+
+// Minimum free street (px) needed between hazard A's back edge and hazard B's front edge.
+function requiredGap(typeA, typeB, v) {
+  const s = SCALE, fair = (FAIR_WINDOW + 0.01) * v;          // +10ms for frame-timing slack
+  if (isHighHazard(typeB)) {
+    if (isHighHazard(typeA)) return 0;                     // just stay ducked (hold-to-duck)
+    return PLAYER_DUCK_W * s + fair;                       // land / fast-fall, then duck in time
+  }
+  const { w: wB, h: hB } = obstacleSize(typeB);
+  const win = jumpAboveWindow(hB + 1);
+  const dMin = v * win[0];                                 // jumping closer than this is too late
+  return PLAYER_STAND_W * s + dMin + fair;                 // stand clear of A, then a full jump window
+}
+
+// Seconds to hold back the next spawn so the gap is fair (0 = spawn now).
+function fairSpawnDelay(type) {
+  if (!obstacles.length) return 0;
+  const prev = obstacles.reduce((a, o) => (o.x > a.x ? o : a));
+  const vMax = LEVEL_SPEEDS[Math.min(level, LEVEL_SPEEDS.length - 1)] * SCALE; // next level's speed, to be safe
+  const gap = (W + 4 * SCALE) - (prev.x + prev.w);
+  const need = requiredGap(prev.type, type, vMax);
+  return gap >= need ? 0 : (need - gap) / currentScrollSpeed() + 0.01;
+}
+
+// Current scroll speed in CSS px/s (level speed during a run, base speed on menus).
+function currentScrollSpeed() {
+  return (state === 'playing' ? speedNow : SCROLL_SPEED_BASE) * SCALE;
+}
+
+function onLevelUp(lv) {
+  const pts = LEVEL_POINTS[lv - 1];
+  const art = cached('kana|speedup', () => bakeKanaText('加速!!', Math.round(28 * SCALE * DPR), ['#ffffff', '#7ff0ff', '#35d6e8'], PAL.cobalt));
+  showBanner(art, 'SPEED UP!  +' + pts + ' / SEC', W * 0.5, PLAY_H * 0.3, 1.5);
+  screenFlash('127,240,255', 0.16);
+  addShake(3 * SCALE, 0.2);
+  sfxSpeedUp();
+}
+
+// Re-fit the world after a resize / rotation so hazards stay on the street.
+function onViewResize(oldW, oldGround, oldScale) {
+  if (!player || !oldScale) return;
+  const k = SCALE / oldScale;
+  for (const o of obstacles) {
+    o.x = o.x * (W / oldW);
+    o.w *= k; o.h *= k;
+    o.top = GROUND - (oldGround - o.top) * k;
+  }
+  player.y *= k; player.vy *= k;
 }
 
 function rectsOverlap(a, b) {
@@ -439,10 +531,19 @@ function killPlayer() {
   isHighScoreEntry = false;
   playerRank = null;
   rankCheckDone = false;
+  const deadRun = runId, deadScore = score;
   fetchLeaderboard().then(() => {
-    playerRank = computePlayerRank(score);
     const top10 = leaderboardData.slice(0, 10);
-    isHighScoreEntry = top10.length < 10 || score > top10[9].score;
+    const qualifies = top10.length < 10 || deadScore > top10[9].score;
+    if (pendingAutoSave && pendingAutoSave.run === deadRun) {
+      // the player tapped PLAY AGAIN before the rank was known: keep a Top 10 score as ANON
+      if (qualifies) submitHighScore('ANON', deadScore, false);
+      pendingAutoSave = null;
+      return;
+    }
+    if (runId !== deadRun || state !== 'GAME_OVER') return; // they already left this results screen
+    playerRank = computePlayerRank(deadScore);
+    isHighScoreEntry = qualifies;
     if (!isHighScoreEntry) nicknameSubmitted = true;
     rankCheckDone = true;
   });
@@ -473,9 +574,14 @@ function update(dt) {
   stepPhase += dt * 10;
   if (recordFlashT > 0) recordFlashT -= dt;
 
-  // score: one point per second survived (+ judgement bonuses)
+  // speed level: steps up every LEVEL_SECONDS; the street eases up to the new speed
+  const lv = Math.min(LEVEL_SPEEDS.length, 1 + Math.floor(runTime / LEVEL_SECONDS));
+  if (lv > level) { level = lv; onLevelUp(level); }
+  speedNow = Math.min(LEVEL_SPEEDS[level - 1], speedNow + SPEED_EASE * dt);
+
+  // score: survival points per second grow with the level (+1 .. +4), plus judgement bonuses
   scoreTimer += dt;
-  while (scoreTimer >= 1) { scoreTimer -= 1; addScore(1); }
+  while (scoreTimer >= 1) { scoreTimer -= 1; addScore(LEVEL_POINTS[level - 1]); }
 
   // player physics
   if (!player.onGround) {
@@ -487,20 +593,28 @@ function update(dt) {
     }
   }
   if (player.squish > 0) player.squish -= dt * 4;
+  // hold-to-duck: a flick ducks for DUCK_DURATION; keeping the finger / Down key held keeps you down
+  if (downHeld && player.onGround && !player.ducking) { player.ducking = true; player.duckTimer = 0; } // e.g. after a fast-fall
   if (player.ducking) {
     player.duckTimer -= dt;
-    if (player.duckTimer <= 0) player.ducking = false;
+    if (player.duckTimer <= 0 && !downHeld) player.ducking = false;
   }
 
   // spawn obstacles
   spawnTimer -= dt;
   if (spawnTimer <= 0) {
-    spawnObstacle();
-    spawnTimer = spawnIntervalForScore(score);
+    if (!pendingType) pendingType = pickObstacleType();
+    const wait = fairSpawnDelay(pendingType);
+    if (wait > 0) spawnTimer = wait;               // hold this hazard back until its gap is dodgeable
+    else {
+      spawnObstacle(pendingType);
+      pendingType = null;
+      spawnTimer = spawnIntervalForTime(runTime);
+    }
   }
 
   // move + collide obstacles
-  const speed = SCROLL_SPEED_BASE * SCALE;
+  const speed = currentScrollSpeed();
   const pBox = playerHitbox();
   for (let i = obstacles.length - 1; i >= 0; i--) {
     const o = obstacles[i];

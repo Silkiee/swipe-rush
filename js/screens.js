@@ -336,8 +336,14 @@ function drawHud(t) {
   const lead = padded.length - digits.length;
   drawPixelLine(digits, 10 * s + (lead * 6 * uDev) / DPR, y, u, recordFlash ? PAL.gold : '#ffffff', PAL.ink, null, 'left');
 
+  // SPEED level + survival points per second
+  const lvCol = [PAL.aqua, PAL.gold, '#ff8a6b', '#7dff8a'][level - 1] || PAL.aqua;
+  const lvX = 10 * s + 98 * s;
+  drawPixelLine('SPEED LV' + level, lvX, 11 * s, 1.4 * s, lvCol, null, null, 'left');
+  drawPixelLine('+' + LEVEL_POINTS[level - 1] + '/S', lvX, y, 2.0 * s, lvCol, PAL.ink, null, 'left');
+
   // HI-SCORE
-  const hiX = W * 0.47;
+  const hiX = W * 0.6;
   drawPixelLine('HI-SCORE', hiX, 11 * s, 1.4 * s, PAL.coral, null, null, 'left');
   drawPixelLine(String(Math.max(highScore, score)), hiX, y, 2.0 * s, PAL.gold, PAL.ink, null, 'left');
 
@@ -428,15 +434,17 @@ function drawGameOverScreen(t) {
   y += 22 * s;
 
   submitBtnRect = skipBtnRect = nicknameBoxRect = playAgainBtnRect = rankingBtnRect = null;
-  if (!rankCheckDone) {
-    if (Math.floor(t * 3) % 2 === 0) drawPixelLine('LOADING RANKING...', W / 2, y + 6 * s, 1.6 * s, PAL.dusk, null, null);
-    ctx.globalAlpha = 1;
-    return;
-  }
   const live = t > GAME_OVER_INPUT_DELAY;                 // ignore taps from the swipe that caused the crash
   const colW = W * 0.84, colX = W / 2 - colW / 2, bh = 36 * s, gap = 10 * s;
+  const frameBd = Math.max(2, Math.round(3 * s));
+  const hugW = (label, unit) => Math.min(colW, pixelLineWidth(label, unit, false) + 2 * (10 * s + frameBd));
 
-  if (isHighScoreEntry) {
+  // Rank slot — always the same height, so PLAY AGAIN / BACK TO MENU never move under the finger:
+  // loading -> "CHECKING RANK", Top 10 -> nickname + SUBMIT, otherwise -> VIEW RANKING.
+  const slotTop = y, slotH = 12 * s + bh;
+  if (!rankCheckDone) {
+    // slot stays empty while "CALCULATING RANK..." shows above
+  } else if (isHighScoreEntry) {
     // nickname box with SUBMIT on its right
     drawPixelLine('TOP 10! ENTER NICKNAME:', W / 2, y, 1.7 * s, PAL.cream, null, null);
     y += 12 * s;
@@ -450,25 +458,28 @@ function drawGameOverScreen(t) {
     const subR = { x: colX + boxW + gap, y, w: subW, h: boxH };
     if (live) submitBtnRect = subR;
     drawArcadeButton(subR, 'SUBMIT', { disabled: nicknameSubmitted, frame: PAL.gold, unit: 1.7 * s });
-    y += boxH + 14 * s;
+  } else {
+    const rw = hugW('VIEW RANKING', 1.8 * s);
+    const rr = { x: W / 2 - rw / 2, y: slotTop + slotH - bh, w: rw, h: bh };
+    if (live) rankingBtnRect = rr;
+    drawArcadeButton(rr, 'VIEW RANKING', { unit: 1.8 * s });
   }
+  y = slotTop + slotH + 14 * s;
 
-  // stacked actions: PLAY AGAIN, (VIEW RANKING), BACK TO MENU
-  const stack = [['play', 'PLAY AGAIN', { frame: '#7dff8a', key: PAL.gold, text: '#ffffff', unit: 2.1 * s }]];
-  if (!isHighScoreEntry) stack.push(['rank', 'VIEW RANKING', { unit: 1.8 * s }]);
-  stack.push(['menu', 'BACK TO MENU', { frame: PAL.coral, key: PAL.aqua, unit: 1.8 * s }]);
+  // stacked actions: PLAY AGAIN above BACK TO MENU
+  const stack = [['play', 'PLAY AGAIN', { frame: '#7dff8a', key: PAL.gold, text: '#ffffff', unit: 2.1 * s }],
+                 ['menu', 'BACK TO MENU', { frame: PAL.coral, key: PAL.aqua, unit: 1.8 * s }]];
   for (const [id, label, opts] of stack) {
     // hug the label: text width + 10px padding each side inside the frame, centred
-    const frameBd = Math.max(2, Math.round(3 * s));
-    const bw = Math.min(colW, pixelLineWidth(label, opts.unit, false) + 2 * (10 * s + frameBd));
+    const bw = hugW(label, opts.unit);
     const r = { x: W / 2 - bw / 2, y, w: bw, h: id === 'play' ? bh + 4 * s : bh };
-    if (live) { if (id === 'play') playAgainBtnRect = r; else if (id === 'rank') rankingBtnRect = r; else skipBtnRect = r; }
+    if (live) { if (id === 'play') playAgainBtnRect = r; else skipBtnRect = r; }
     drawArcadeButton(r, label, opts);
     y += r.h + gap;
   }
   y += 4 * s;
   const hint = nicknameSubmitted && isHighScoreEntry ? 'SUBMITTING...'
-    : isHighScoreEntry ? 'ENTER = SUBMIT  /  ESC = MENU' : 'SPACE = PLAY AGAIN  /  ESC = MENU';
+    : rankCheckDone && isHighScoreEntry ? 'ENTER = SUBMIT  /  ESC = MENU' : 'SPACE = PLAY AGAIN  /  ESC = MENU';
   drawPixelLine(hint, W / 2, y, 1.3 * s, PAL.dusk, null, null);
   ctx.globalAlpha = 1;
 }
@@ -532,7 +543,7 @@ function drawLeaderboardScreen(t) {
 // title button, and by itself the first time a player taps to start.
 // =====================================================================
 let howToPage = 0, howToT = 0, howToDir = 1;
-const HOWTO_PAGES = ['CONTROLS', 'OBSTACLES', 'POINTS'];
+const HOWTO_PAGES = ['CONTROLS', 'OBSTACLES', 'SPEED + POINTS', 'RULES'];
 
 // Draws the real runner sprite at any spot/scale by borrowing drawPlayer() with a stand-in state.
 function drawRunnerAt(cx, ground, k, pose, lift, t) {
@@ -590,7 +601,7 @@ function drawWrapped(text, x, y, unit, maxW, fill, lineGap) {
 }
 
 function drawHowToControls(px, py, pw, ph, t) {
-  const s = SCALE, cardW = (pw - 30 * s) / 2, cardH = Math.min(ph * 0.6, 300 * s);
+  const s = SCALE, cardW = (pw - 30 * s) / 2, cardH = Math.min(ph * 0.5, 270 * s);
   const cards = [
     { x: px + 10 * s, head: 'SWIPE UP', col: PAL.aqua, act: 'JUMP', pose: 'jump' },
     { x: px + 20 * s + cardW, head: 'SWIPE DOWN', col: PAL.coral, act: 'DUCK', pose: 'duck' },
@@ -610,11 +621,16 @@ function drawHowToControls(px, py, pw, ph, t) {
     drawRunnerAt(mid + 8 * s, ground, 1.1, c.pose, lift, t);
     drawPixelLine('= ' + c.act, mid, cy + cardH - 18 * s, 2.4 * s, PAL.gold, PAL.ink, PAL.tomato);
   }
-  const u = 1.7 * s, tw = pw - 24 * s;
-  let y = py + cardH + Math.max(30 * s, (ph - cardH - 150 * s) / 2);
-  y += drawWrapped('SWIPE ANYWHERE ON THE SCREEN. THE MOVE FIRES AS SOON AS YOUR FINGER MOVES.', px + 12 * s, y, u, tw, PAL.cream) + 8 * s;
-  y += drawWrapped('IN THE AIR, SWIPE DOWN TO FAST-FALL BACK TO THE STREET.', px + 12 * s, y, u, tw, PAL.aquaPale) + 8 * s;
-  drawWrapped('DESKTOP: ARROW KEYS OR W / S', px + 12 * s, y, u, tw, PAL.dusk);
+  const u = 1.6 * s, tw = pw - 24 * s;
+  const lines = [
+    ['SWIPE ANYWHERE. THE MOVE FIRES AS SOON AS YOUR FINGER MOVES.', PAL.cream],
+    ['HOLD YOUR FINGER DOWN AFTER SWIPING DOWN TO STAY DUCKED. LIFT IT TO STAND UP.', PAL.gold],
+    ['IN THE AIR, SWIPE DOWN TO FAST-FALL BACK TO THE STREET.', PAL.aquaPale],
+    ['DESKTOP: SPACE OR UP = JUMP. HOLD DOWN = DUCK.', PAL.dusk],
+  ];
+  const h = lines.reduce((a, [txt]) => a + wrapPixelText(txt, u, tw).length * u * 10 + 8 * s, 0);
+  let y = py + cardH + 10 * s + Math.max(14 * s, (ph - cardH - 10 * s - h) / 2);
+  for (const [txt, col] of lines) y += drawWrapped(txt, px + 12 * s, y, u, tw, col) + 8 * s;
 }
 
 function drawHowToObstacles(px, py, pw, ph, t) {
@@ -641,36 +657,71 @@ function drawHowToObstacles(px, py, pw, ph, t) {
   });
 }
 
+// Lays blocks ({h, draw(y)}) evenly down a panel.
+function spreadBlocks(blocks, py, ph) {
+  const s = SCALE, total = blocks.reduce((a, b) => a + b.h, 0);
+  const gap = Math.max(8 * s, Math.min(40 * s, (ph - total) / (blocks.length + 1)));
+  let y = py + gap;
+  for (const b of blocks) { b.draw(y); y += b.h + gap; }
+}
+
 function drawHowToPoints(px, py, pw, ph, t) {
-  const s = SCALE, tx = px + 78 * s, tw = pw - 90 * s, u = 1.7 * s, lh = u * 10;
+  const s = SCALE, tx = px + 78 * s, tw = pw - 90 * s, u = 1.6 * s, lh = u * 10, fullW = pw - 24 * s;
   const textH = (text, w) => wrapPixelText(text, u, w).length * lh;
   const row = (badgeTxt, badgeCol, text, col) => ({
     h: Math.max(textH(text, tw), 28 * s),
     draw: (y) => { drawPixelLine(badgeTxt, px + 42 * s, y + 6 * s, 3 * s, badgeCol, PAL.ink, PAL.tomato); drawWrapped(text, tx, y, u, tw, col); },
   });
+  const speedIntro = 'EVERY 15 SECONDS THE STREET SPEEDS UP AND EACH SECOND YOU SURVIVE IS WORTH MORE:';
+  const ladderH = 62 * s;
   const judgeIntro = 'DODGE AT THE LAST MOMENT FOR A BONUS:';
-  const blocks = [
-    row('+1', PAL.gold, 'EVERY SECOND YOU SURVIVE.', PAL.cream),
+  spreadBlocks([
+    { h: textH(speedIntro, fullW) + 8 * s + ladderH, draw: (y) => {
+      const ih = drawWrapped(speedIntro, px + 12 * s, y, u, fullW, PAL.cream);
+      const cols = [PAL.aqua, PAL.gold, '#ff8a6b', '#7dff8a'], colW = (pw - 40 * s) / 4, base = y + ih + 8 * s + ladderH;
+      for (let i = 0; i < 4; i++) {
+        const bx = px + 20 * s + i * colW, bh2 = (18 + i * 10) * s, active = Math.floor(t * 1.2) % 4 === i;
+        ctx.fillStyle = cols[i];
+        ctx.fillRect(bx + 6 * s, base - bh2 - 14 * s, colW - 12 * s, bh2);
+        if (active) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2 * s; ctx.strokeRect(bx + 5 * s, base - bh2 - 15 * s, colW - 10 * s, bh2 + 2 * s); }
+        drawPixelLine('+' + LEVEL_POINTS[i] + '/S', bx + colW / 2, base - bh2 - 24 * s, 1.6 * s, '#ffffff', PAL.ink, null);
+        drawPixelLine('LV' + (i + 1), bx + colW / 2, base - 5 * s, 1.4 * s, cols[i], null, null);
+      }
+    } },
     row('HIT', PAL.aqua, 'EVERY OBSTACLE YOU CLEAR ADDS 1 TO YOUR COMBO. EVERY 5TH HIT GETS A FANFARE!', PAL.cream),
-    { h: textH(judgeIntro, pw - 24 * s) + 78 * s, draw: (y) => {
-      const ih = drawWrapped(judgeIntro, px + 12 * s, y, u, pw - 24 * s, PAL.aquaPale);
-      const keys = ['NICE', 'GREAT', 'PERFECT'], colW = (pw - 16 * s) / 3, jy = y + ih + 22 * s;
+    { h: textH(judgeIntro, fullW) + 70 * s, draw: (y) => {
+      const ih = drawWrapped(judgeIntro, px + 12 * s, y, u, fullW, PAL.aquaPale);
+      const keys = ['NICE', 'GREAT', 'PERFECT'], colW = (pw - 16 * s) / 3, jy = y + ih + 20 * s;
       keys.forEach((k, i) => {
         const cx = px + 8 * s + colW * (i + 0.5), art = judgeArt(k).word;
-        const sc = Math.min(1, (colW - 8 * s) / (art.width / DPR));
+        const sc = Math.min(0.9, (colW - 8 * s) / (art.width / DPR));
         const { h } = drawBaked(art, cx, jy, sc * (1 + 0.04 * Math.sin(t * 5 + i)));
-        drawPixelLine('+' + (i + 1), cx, jy + h / 2 + 14 * s, 2.4 * s, PAL.gold, PAL.navy, PAL.tomato);
+        drawPixelLine('+' + (i + 1), cx, jy + h / 2 + 12 * s, 2.2 * s, PAL.gold, PAL.navy, PAL.tomato);
       });
     } },
     row('+8', '#7dff8a', 'JUMP CLEAN OVER A CROW DRONE. IT TAKES PERFECT TIMING!', PAL.cream),
-    { h: textH('TOP 10 SCORES JOIN THE RANKING. HOW FAR CAN YOU RUN?', pw - 24 * s),
-      draw: (y) => drawWrapped('TOP 10 SCORES JOIN THE RANKING. HOW FAR CAN YOU RUN?', px + 12 * s, y, u, pw - 24 * s, PAL.gold) },
+  ], py, ph);
+}
+
+function drawHowToRules(px, py, pw, ph, t) {
+  const s = SCALE, tx = px + 56 * s, tw = pw - 68 * s, u = 1.7 * s, lh = u * 10;
+  const rules = [
+    ['ONE HIT ENDS THE RUN.', PAL.coral],
+    ['THE STREET SPEEDS UP EVERY 15 SECONDS. 4 SPEED LEVELS, TOP SPEED AT 1 MINUTE.', PAL.aqua],
+    ['EVERY OBSTACLE CAN BE CLEARED AT ANY SPEED. IF YOU CRASH, IT WAS THE TIMING!', '#7dff8a'],
+    ['SCORE IN THE GLOBAL TOP 10 TO PUT YOUR NAME ON THE RANKING.', PAL.gold],
+    ['YOUR BEST SCORE IS SAVED ON THIS DEVICE.', PAL.cream],
   ];
-  // spread the blocks evenly down the panel
-  const total = blocks.reduce((a, b) => a + b.h, 0);
-  const gap = Math.max(10 * s, Math.min(44 * s, (ph - total) / (blocks.length + 1)));
-  let y = py + gap;
-  for (const b of blocks) { b.draw(y); y += b.h + gap; }
+  spreadBlocks(rules.map(([txt, col], i) => ({
+    h: Math.max(wrapPixelText(txt, u, tw).length * lh, 26 * s),
+    draw: (y) => {
+      const bx = px + 16 * s, bs = 24 * s;
+      ctx.fillStyle = col; ctx.fillRect(bx, y - 4 * s, bs, bs);
+      ctx.fillStyle = PAL.navy; ctx.fillRect(bx + 2 * s, y - 2 * s, bs - 4 * s, bs - 4 * s);
+      drawPixelLine(String(i + 1), bx + bs / 2, y - 4 * s + bs / 2, 2 * s, col, null, null);
+      drawWrapped(txt, tx, y, u, tw, PAL.cream);
+    },
+  })), py, ph);
 }
 
 function drawHowToScreen(t) {
@@ -694,7 +745,7 @@ function drawHowToScreen(t) {
   // page name + dots
   drawPixelLine(HOWTO_PAGES[howToPage], W / 2, y + 8 * s, 2 * s, PAL.gold, PAL.ink, PAL.tomato);
   for (let i = 0; i < HOWTO_PAGES.length; i++) {
-    const dx = W / 2 + (i - 1) * 16 * s;
+    const dx = W / 2 + (i - (HOWTO_PAGES.length - 1) / 2) * 16 * s;
     ctx.fillStyle = i === howToPage ? PAL.gold : '#2b4374';
     ctx.fillRect(dx - 4 * s, y + 22 * s, 8 * s, 8 * s);
   }
@@ -718,7 +769,8 @@ function drawHowToScreen(t) {
   ctx.translate((1 - slide) * W * 0.2 * howToDir, 0);
   if (howToPage === 0) drawHowToControls(px, py, pw, ph, t);
   else if (howToPage === 1) drawHowToObstacles(px, py, pw, ph, t);
-  else drawHowToPoints(px, py, pw, ph, t);
+  else if (howToPage === 2) drawHowToPoints(px, py, pw, ph, t);
+  else drawHowToRules(px, py, pw, ph, t);
   ctx.restore();
   ctx.globalAlpha = 1;
 }
