@@ -85,6 +85,7 @@ const JUDGE_STYLE = {
   NICE:    { word: 'NICE!',     kana: 'ナイス!',       stops: ['#ffffff', '#bffcff', '#35d6e8', '#1466c8'], extrude: '#0b2a66', kanaStops: ['#ffffff', '#bffcff'] },
   GREAT:   { word: 'GREAT!!',   kana: 'グレート!!',    stops: ['#fff8e6', '#ffe14d', '#ffb02e', '#ff7a2f'], extrude: '#7a3a0c', kanaStops: ['#ffffff', '#ffe14d'] },
   PERFECT: { word: 'PERFECT!!', kana: 'パーフェクト!!', stops: ['#ffffff', '#7ff0ff', '#7dff8a', '#ffe14d', '#ff5a4f'], extrude: '#7a1420', kanaStops: ['#ffffff', '#ffe14d', '#ff8a6b'] },
+  OVER:    { word: 'JUMP OVER!!', kana: '飛び越え!!', stops: ['#ffffff', '#ffe14d', '#7dff8a', '#7ff0ff', '#35d6e8'], extrude: '#0b2a66', kanaStops: ['#ffffff', '#7dff8a', '#ffe14d'] },
 };
 
 function judgeArt(key) {
@@ -120,6 +121,7 @@ function showJudgement(key, bonus) {
   callouts = callouts.filter((c) => c.kind !== 'judge');
   callouts.push({ kind: 'judge', key, bonus, t: 0, life: 0.95, x: W * 0.55, y: PLAY_H * 0.36 });
   if (key === 'PERFECT') spawnBurst(W * 0.55, PLAY_H * 0.36, 18, [PAL.white, PAL.aqua, PAL.gold, PAL.coral], 220, false);
+  if (key === 'OVER') { spawnBurst(W * 0.55, PLAY_H * 0.36, 26, [PAL.white, PAL.gold, '#7dff8a', PAL.aqua], 260, false); screenFlash('255,225,77', 0.14); }
 }
 
 function showBanner(art, sub, x, y, life) {
@@ -172,7 +174,7 @@ function drawCallouts() {
     ctx.globalAlpha = alpha;
     if (c.kind === 'judge') {
       const art = judgeArt(c.key);
-      const wob = c.key === 'PERFECT' ? Math.sin(c.t * 40) * 1.5 * SCALE * (1 - clamp01(c.t / 0.4)) : 0;
+      const wob = (c.key === 'PERFECT' || c.key === 'OVER') ?Math.sin(c.t * 40) * 1.5 * SCALE * (1 - clamp01(c.t / 0.4)) : 0;
       const { h } = drawBaked(art.word, c.x + wob, c.y + rise, scale);
       const kn = drawBaked(art.kana, c.x - 8 * SCALE, c.y + rise + h * 0.5 + 6 * SCALE, scale * 0.9, true);
       if (c.bonus) drawPixelLine('+' + c.bonus, c.x + kn.w * 0.5 + 6 * SCALE, c.y + rise + h * 0.5 + 6 * SCALE + kn.h * 0.5, 2.4 * SCALE, PAL.gold, PAL.navy, PAL.tomato, 'left');

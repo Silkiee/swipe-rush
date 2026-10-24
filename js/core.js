@@ -64,7 +64,9 @@ const SPAWN_BASE_INTERVAL = 1.65;
 const SPAWN_MIN_INTERVAL = 0.68;
 const SPAWN_RAMP_RATE = 0.016;      // interval shrinks per point of score
 
-const SWIPE_THRESHOLD = 28;         // px at SCALE=1
+const SWIPE_THRESHOLD = 28;         // px at SCALE=1 — max travel that still counts as a tap
+const SWIPE_FIRE_DIST = 22;         // px at SCALE=1 — vertical travel that fires a swipe mid-gesture
+const SWIPE_ANGLE_RATIO = 0.6;      // |dy| must be >= 0.6*|dx| (~59deg off vertical) so thumb arcs count
 
 // Obstacle footprints (CSS px at SCALE=1). Hitboxes match the old pixel-scan results exactly.
 const SPIKE_W_BASE = 40, SPIKE_H_BASE = 30;
@@ -83,7 +85,10 @@ const JUDGE_WINDOWS = [
   { max: 0.35, key: 'NICE',    bonus: 1 },
 ];
 
+const BIRD_JUMP_BONUS = 8;          // jumping clean over a crow drone (replaces NICE/GREAT/PERFECT)
+
 const HIGH_SCORE_KEY = 'swipeRushHighScore';
+const HOWTO_SEEN_KEY = 'swipeRushHowToSeen';
 const MUTE_KEY = 'swipeRushMuted';
 
 const RIP_PHRASES = [

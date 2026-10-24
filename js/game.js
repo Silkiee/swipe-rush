@@ -134,7 +134,8 @@ function skipToMenu() {
 
 function doJump() {
   if (state !== 'playing') return;
-  if (player.onGround && !player.ducking) {
+  if (player.onGround) {
+    player.ducking = false; // swipe up cancels a duck straight into a jump
     player.onGround = false;
     player.vy = JUMP_VELOCITY * SCALE;
     lastActionT = runTime;
@@ -152,32 +153,87 @@ function doDownAction() {
     spawnDust(10);
     addShake(2 * SCALE, 0.1);
     sfxFastFall();
-  } else if (!player.ducking) {
+  } else {
+    // a repeat swipe while already ducking extends the duck instead of being ignored
+    if (!player.ducking) sfxDuck();
     player.ducking = true;
     player.duckTimer = DUCK_DURATION;
     lastActionT = runTime;
-    sfxDuck();
   }
 }
 
-function handleStartTap() {
-  ensureAudio();
-  if (titleIntroActive()) { skipTitleIntro(); return; } // first tap during the intro just skips it
+// ---- HOW TO PLAY --------------------------------------------------
+let howToSeen = false;
+try { howToSeen = localStorage.getItem(HOWTO_SEEN_KEY) === '1'; } catch (e) { howToSeen = false; }
+
+function openHowTo() {
+  state = 'HOW_TO_PLAY';
+  howToPage = 0; howToT = 0; howToDir = 1;
+  howToSeen = true;
+  try { localStorage.setItem(HOWTO_SEEN_KEY, '1'); } catch (e) {}
+}
+
+function howToGo(delta) {
+  const next = howToPage + delta;
+  if (next < 0) { state = 'START_MENU'; return; }
+  if (next >= HOWTO_PAGES.length) { startRun(); return; }
+  howToPage = next; howToT = 0; howToDir = delta;
+}
+
+function handleHowToTap(x, y, dx, dy) {
+  // horizontal swipe flips pages; buttons do too
+  if (Math.abs(dx) > SWIPE_THRESHOLD * SCALE * 1.5 && Math.abs(dx) > Math.abs(dy)) { sfxUiBlip(); howToGo(dx < 0 ? 1 : -1); return; }
+  if (pointInRect(x, y, howToNextRect)) { sfxUiBlip(); howToGo(1); return; }
+  if (pointInRect(x, y, howToBackRect)) { sfxUiBlip(); howToGo(-1); }
+}
+
+function startRun() {
   state = 'playing';
   resetGame();
   sfxStart();
   musicStart();
 }
 
-let pointerActive = false, pointerStartY = 0, pointerStartX = 0;
+function handleStartTap() {
+  ensureAudio();
+  if (titleIntroActive()) { skipTitleIntro(); return; } // first tap during the intro just skips it
+  if (!howToSeen) { sfxUiBlip(); openHowTo(); return; } // first ever start shows the instructions
+  startRun();
+}
+
+// Swipes fire mid-gesture, the moment the finger travels past the threshold (no waiting for the
+// lift). After firing, the anchor moves to the current point so a reversal (down -> up) without
+// lifting fires again. Pointer capture + pointercancel keep browser gestures from eating swipes.
+let pointerActive = false, pointerId = null, pointerStartY = 0, pointerStartX = 0;
+let swipeAnchorX = 0, swipeAnchorY = 0, swipeFired = false, lastSwipeDir = 0;
+
+function canvasPoint(e) {
+  const rect = canvas.getBoundingClientRect();
+  return [e.clientX - rect.left, e.clientY - rect.top];
+}
+
+// Returns -1 (up), 1 (down) or 0. Accepts strokes up to ~60deg off vertical, so thumb arcs still count.
+function swipeDirection(dx, dy) {
+  if (Math.abs(dy) < SWIPE_FIRE_DIST * SCALE) return 0;
+  if (Math.abs(dy) < Math.abs(dx) * SWIPE_ANGLE_RATIO) return 0;
+  return dy < 0 ? -1 : 1;
+}
+
+function fireSwipe(dir) {
+  if (dir < 0) doJump(); else doDownAction();
+  swipeFired = true;
+  lastSwipeDir = dir;
+}
 
 canvas.addEventListener('pointerdown', (e) => {
   ensureAudio();
   if (state !== 'GAME_OVER' && !musicPlaying()) musicStart();
   pointerActive = true;
-  const rect = canvas.getBoundingClientRect();
-  pointerStartX = e.clientX - rect.left;
-  pointerStartY = e.clientY - rect.top;
+  pointerId = e.pointerId;
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  [pointerStartX, pointerStartY] = canvasPoint(e);
+  swipeAnchorX = pointerStartX; swipeAnchorY = pointerStartY;
+  swipeFired = false; lastSwipeDir = 0;
   // Tapping the nickname box focuses the hidden input on the same gesture so mobile keyboards open reliably.
   if (state === 'GAME_OVER' && isHighScoreEntry && pointInRect(pointerStartX, pointerStartY, nicknameBoxRect)) {
     hiddenInput.value = nicknameInput;
@@ -185,13 +241,25 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 
+canvas.addEventListener('pointermove', (e) => {
+  if (!pointerActive || e.pointerId !== pointerId || state !== 'playing') return;
+  const [x, y] = canvasPoint(e);
+  const dir = swipeDirection(x - swipeAnchorX, y - swipeAnchorY);
+  if (dir === 0) return;
+  if (dir !== lastSwipeDir) fireSwipe(dir);
+  swipeAnchorX = x; swipeAnchorY = y; // re-arm from here; continuing the same way won't double-fire
+});
+
+canvas.addEventListener('pointercancel', (e) => {
+  if (e.pointerId === pointerId) pointerActive = false;
+});
+
 canvas.addEventListener('pointerup', (e) => {
-  if (!pointerActive) return;
+  if (!pointerActive || e.pointerId !== pointerId) return;
   pointerActive = false;
-  const rect = canvas.getBoundingClientRect();
-  const endX = e.clientX - rect.left, endY = e.clientY - rect.top;
+  const [endX, endY] = canvasPoint(e);
   const dy = endY - pointerStartY, dx = endX - pointerStartX;
-  const isTap = Math.hypot(dx, dy) < SWIPE_THRESHOLD * SCALE;
+  const isTap = !swipeFired && Math.hypot(dx, dy) < SWIPE_THRESHOLD * SCALE;
 
   if (isTap && pointInRect(endX, endY, muteBtnRect) && state !== 'GAME_OVER') { toggleMute(); return; }
 
@@ -202,9 +270,11 @@ canvas.addEventListener('pointerup', (e) => {
       fetchLeaderboard();
       return;
     }
+    if (pointInRect(endX, endY, howToBtnRect)) { sfxUiBlip(); openHowTo(); return; }
     handleStartTap();
     return;
   }
+  if (state === 'HOW_TO_PLAY') { handleHowToTap(endX, endY, dx, dy); return; }
   if (state === 'LEADERBOARD_SCREEN') {
     if (pointInRect(endX, endY, backToMenuRect)) { sfxUiBlip(); state = 'START_MENU'; }
     return;
@@ -214,13 +284,15 @@ canvas.addEventListener('pointerup', (e) => {
     if (pointInRect(endX, endY, skipBtnRect)) { sfxUiBlip(); skipToMenu(); return; }
     return;
   }
-  if (state === 'playing') {
-    const threshold = SWIPE_THRESHOLD * SCALE;
-    if (Math.abs(dy) > threshold && Math.abs(dy) > Math.abs(dx)) {
-      if (dy < 0) doJump(); else doDownAction();
-    }
+  if (state === 'playing' && !swipeFired) {
+    // very fast flicks can lift before any pointermove arrives — judge them on release
+    const dir = swipeDirection(endX - swipeAnchorX, endY - swipeAnchorY);
+    if (dir !== 0) fireSwipe(dir);
   }
 });
+
+// iOS Safari can still start a page scroll / toolbar reveal on a downward drag; block it on the canvas.
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
 
 window.addEventListener('keydown', (e) => {
   // GAME_OVER: free-text nickname entry (up to 10 chars), gated by isHighScoreEntry.
@@ -241,6 +313,9 @@ window.addEventListener('keydown', (e) => {
     ensureAudio();
     if (state === 'START_MENU') { handleStartTap(); return; }
     doJump();
+  } else if (state === 'HOW_TO_PLAY' && ['ArrowRight', 'ArrowLeft', 'Escape'].includes(e.key)) {
+    e.preventDefault();
+    if (e.key === 'Escape') state = 'START_MENU'; else howToGo(e.key === 'ArrowRight' ? 1 : -1);
   } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
     e.preventDefault();
     ensureAudio();
@@ -249,6 +324,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     ensureAudio();
     if (state === 'START_MENU') handleStartTap();
+    else if (state === 'HOW_TO_PLAY') howToGo(1);
     else if (state === 'LEADERBOARD_SCREEN') state = 'START_MENU';
   }
 });
@@ -300,6 +376,13 @@ function clearObstacle(o) {
   bumpCombo(combo);
   sfxClear(combo);
   if (combo % 5 === 0) sfxComboMilestone(combo);
+  // Jumping OVER a crow drone (never under it) is a precision move: flat bonus, replaces the timing bonus.
+  if (o.type === 'bird' && o.wentOver && !o.wentUnder) {
+    showJudgement('OVER', BIRD_JUMP_BONUS);
+    addScore(BIRD_JUMP_BONUS);
+    if (combo % 5 !== 0) sfxJudge('PERFECT');
+    return;
+  }
   const d = o.arriveDelta;
   if (d !== undefined && d >= 0) {
     const j = JUDGE_WINDOWS.find((w) => d <= w.max);
@@ -361,6 +444,7 @@ function update(dt) {
     return;
   }
   if (state === 'LEADERBOARD_SCREEN') { leaderboardT += dt; return; }
+  if (state === 'HOW_TO_PLAY') { howToT += dt; return; }
   if (state !== 'playing') return;
 
   runTime += dt;
@@ -400,6 +484,10 @@ function update(dt) {
     const o = obstacles[i];
     o.x -= speed * dt;
     if (o.arriveDelta === undefined && o.x <= pBox.x + pBox.w) o.arriveDelta = runTime - lastActionT;
+    if (o.type === 'bird' && o.x < pBox.x + pBox.w && o.x + o.w > pBox.x) {
+      // while the drone passes the runner, note whether they're above it or below it
+      if (pBox.y + pBox.h <= obstacleHitbox(o).y) o.wentOver = true; else o.wentUnder = true;
+    }
     if (!o.cleared && o.x + o.w < pBox.x) clearObstacle(o);
     if (o.x + o.w < -10) { obstacles.splice(i, 1); continue; }
     if (rectsOverlap(pBox, obstacleHitbox(o))) { killPlayer(); break; }
@@ -412,7 +500,7 @@ function update(dt) {
 function draw() {
   const t = performance.now() / 1000;
   // Replay the title intro whenever we arrive at the menu (but not when backing out of the leaderboard).
-  if (state === 'START_MENU' && lastDrawnState !== 'START_MENU' && lastDrawnState !== 'LEADERBOARD_SCREEN') startTitleIntro();
+  if (state === 'START_MENU' && lastDrawnState !== 'START_MENU' && lastDrawnState !== 'LEADERBOARD_SCREEN' && lastDrawnState !== 'HOW_TO_PLAY') startTitleIntro();
   lastDrawnState = state;
 
   if (state === 'START_MENU') {
@@ -442,6 +530,7 @@ function draw() {
   drawFlash(PLAY_H);
   if (state === 'GAME_OVER') drawGameOverScreen(gameOverT);
   if (state === 'LEADERBOARD_SCREEN') drawLeaderboardScreen(leaderboardT);
+  if (state === 'HOW_TO_PLAY') drawHowToScreen(performance.now() / 1000);
   drawAdBanner();
 }
 

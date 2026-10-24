@@ -7,6 +7,7 @@
 let leaderboardBtnRect = null, backToMenuRect = null;
 let submitBtnRect = null, skipBtnRect = null, nicknameBoxRect = null;
 let muteBtnRect = null;
+let howToBtnRect = null, howToBackRect = null, howToNextRect = null;
 
 // ---------------------------------------------------------------------
 // SHARED UI PIECES
@@ -298,8 +299,13 @@ function drawStartMenu() {
   drawPixelLine('SWIPE DOWN = DUCK / FAST-FALL', W / 2, c2, small, PAL.cream, NAVY, null);
   drawPixelLine('(DESKTOP: SPACE + ARROW KEYS)', W / 2, c3, small * 0.9, PAL.aqua, NAVY, null);
 
-  leaderboardBtnRect = uiAlpha > 0.5 ? { x: btnX, y: btnY, w: btnW, h: btnH } : null;
-  drawArcadeButton({ x: btnX, y: btnY, w: btnW, h: btnH }, '[ LEADERBOARD ]', { unit: mid });
+  // two buttons side by side: HOW TO PLAY (aqua) + RANKING (amber)
+  const pairW = W * 0.84, gapB = 10 * S, halfW = (pairW - gapB) / 2, pairX = W / 2 - pairW / 2;
+  const howR = { x: pairX, y: btnY, w: halfW, h: btnH }, rankR = { x: pairX + halfW + gapB, y: btnY, w: halfW, h: btnH };
+  howToBtnRect = uiAlpha > 0.5 ? howR : null;
+  leaderboardBtnRect = uiAlpha > 0.5 ? rankR : null;
+  drawArcadeButton(howR, 'HOW TO PLAY', { unit: 1.8 * S, frame: PAL.aqua, key: PAL.coral });
+  drawArcadeButton(rankR, 'RANKING', { unit: 1.8 * S });
   drawPixelLine('(C) 2026 SILKIEE', W / 2, footY, small * 0.85, PAL.dusk, null, null);
   drawMuteButton(W - 38 * S, 10 * S);
   ctx.globalAlpha = 1;
@@ -502,4 +508,200 @@ function drawLeaderboardScreen(t) {
   const bw = W * 0.62, bh = 38 * s;
   backToMenuRect = { x: W / 2 - bw / 2, y, w: bw, h: bh };
   drawArcadeButton(backToMenuRect, '[ BACK TO MENU ]', { frame: PAL.aqua, key: PAL.coral });
+}
+
+// =====================================================================
+// HOW TO PLAY — three pages: controls, obstacles, points. Opens from the
+// title button, and by itself the first time a player taps to start.
+// =====================================================================
+let howToPage = 0, howToT = 0, howToDir = 1;
+const HOWTO_PAGES = ['CONTROLS', 'OBSTACLES', 'POINTS'];
+
+// Draws the real runner sprite at any spot/scale by borrowing drawPlayer() with a stand-in state.
+function drawRunnerAt(cx, ground, k, pose, lift, t) {
+  const saved = player;
+  player = { y: -(lift || 0), vy: 0, onGround: pose !== 'jump', ducking: pose === 'duck', duckTimer: 0, squish: 0 };
+  ctx.save();
+  ctx.translate(cx, ground); ctx.scale(k, k); ctx.translate(-W * PLAYER_X_FRAC, -GROUND);
+  drawPlayer(t);
+  ctx.restore();
+  player = saved;
+}
+
+// Draws one hazard exactly as in-game, fitted into a box whose floor is `ground`.
+function drawHazardIcon(type, cx, ground, boxW, boxH, t) {
+  const s = SCALE, w = (type === 'spike' ? SPIKE_W_BASE : HAZARD_DOUBLE_W_BASE) * s;
+  let h, top;
+  if (type === 'spike') { h = SPIKE_H_BASE * s; top = GROUND - h; }
+  else if (type === 'lava') { h = PUDDLE_H_BASE * s; top = GROUND - h; }
+  else if (type === 'bird') { h = BIRD_VIS_H_BASE * s; top = GROUND - BIRD_BOTTOM_OFFSET_BASE * s - h; }
+  else { h = LONG_WALL_TOTAL_H_BASE * s; top = GROUND - LONG_WALL_BOTTOM_OFFSET_BASE * s - h; }
+  const o = { type, x: 0, w, top, h, seed: 7 };
+  const k = Math.min(boxW / (w + 14 * s), boxH / (GROUND - top + 8 * s), 1.5);
+  ctx.fillStyle = '#141c38'; ctx.fillRect(cx - boxW / 2, ground, boxW, 5 * s);     // little strip of street
+  ctx.fillStyle = '#9fb8dc'; ctx.fillRect(cx - boxW / 2, ground, boxW, Math.max(1, 1.5 * s));
+  ctx.save();
+  ctx.translate(cx, ground); ctx.scale(k, k); ctx.translate(-w / 2, -GROUND);
+  if (type === 'spike') drawRoadSpikes(o, s);
+  else if (type === 'lava') drawLivePuddle(o, s, t);
+  else if (type === 'bird') drawCrowDrone(o, s, t);
+  else drawShopShutter(o, s);
+  ctx.restore();
+}
+
+// Chunky swipe arrow with a fingertip sliding along it.
+function drawSwipeArrow(cx, y0, y1, col, t) {
+  const s = SCALE, dir = Math.sign(y1 - y0), head = 12 * s, shaft = 7 * s;
+  const tipY = y1, baseY = y1 - dir * head;
+  ctx.fillStyle = PAL.navy;
+  ctx.fillRect(cx - shaft / 2 - 2 * s, Math.min(y0, baseY) - 2 * s, shaft + 4 * s, Math.abs(baseY - y0) + 4 * s);
+  ctx.beginPath(); ctx.moveTo(cx - head - 2 * s, baseY - dir * 2 * s); ctx.lineTo(cx + head + 2 * s, baseY - dir * 2 * s); ctx.lineTo(cx, tipY + dir * 3 * s); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = col;
+  ctx.fillRect(cx - shaft / 2, Math.min(y0, baseY), shaft, Math.abs(baseY - y0));
+  ctx.beginPath(); ctx.moveTo(cx - head, baseY); ctx.lineTo(cx + head, baseY); ctx.lineTo(cx, tipY); ctx.closePath(); ctx.fill();
+  const p = (t * 1.1) % 1, fy = lerp(y0, baseY, easeOutCubic(p));
+  ctx.globalAlpha = 1 - p * 0.6;
+  ctx.fillStyle = PAL.cream; ctx.strokeStyle = PAL.navy; ctx.lineWidth = 2 * s;
+  ctx.beginPath(); ctx.arc(cx, fy, 7 * s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawWrapped(text, x, y, unit, maxW, fill, lineGap) {
+  const lines = wrapPixelText(text, unit, maxW);
+  lines.forEach((ln, i) => drawPixelLine(ln, x, y + i * (lineGap || unit * 10), unit, fill, PAL.ink, null, 'left'));
+  return lines.length * (lineGap || unit * 10);
+}
+
+function drawHowToControls(px, py, pw, ph, t) {
+  const s = SCALE, cardW = (pw - 30 * s) / 2, cardH = Math.min(ph * 0.6, 300 * s);
+  const cards = [
+    { x: px + 10 * s, head: 'SWIPE UP', col: PAL.aqua, act: 'JUMP', pose: 'jump' },
+    { x: px + 20 * s + cardW, head: 'SWIPE DOWN', col: PAL.coral, act: 'DUCK', pose: 'duck' },
+  ];
+  for (const c of cards) {
+    const cy = py + 10 * s, mid = c.x + cardW / 2;
+    ctx.fillStyle = 'rgba(18,63,115,0.55)'; ctx.fillRect(c.x, cy, cardW, cardH);
+    ctx.strokeStyle = c.col; ctx.lineWidth = 2 * s; ctx.strokeRect(c.x, cy, cardW, cardH);
+    drawPixelLine(c.head, mid, cy + 16 * s, 1.7 * s, c.col, PAL.ink, null);
+    const aTop = cy + 34 * s, aBot = cy + cardH * 0.52;
+    if (c.pose === 'jump') drawSwipeArrow(mid, aBot, aTop, c.col, t);
+    else drawSwipeArrow(mid, aTop, aBot, c.col, t);
+    const ground = cy + cardH - 40 * s;
+    ctx.fillStyle = '#141c38'; ctx.fillRect(c.x + 8 * s, ground, cardW - 16 * s, 5 * s);
+    ctx.fillStyle = '#9fb8dc'; ctx.fillRect(c.x + 8 * s, ground, cardW - 16 * s, Math.max(1, 1.5 * s));
+    const lift = c.pose === 'jump' ? (0.5 + 0.5 * Math.sin(t * 5)) * 22 * s : 0;
+    drawRunnerAt(mid + 8 * s, ground, 1.1, c.pose, lift, t);
+    drawPixelLine('= ' + c.act, mid, cy + cardH - 18 * s, 2.4 * s, PAL.gold, PAL.ink, PAL.tomato);
+  }
+  const u = 1.7 * s, tw = pw - 24 * s;
+  let y = py + cardH + Math.max(30 * s, (ph - cardH - 150 * s) / 2);
+  y += drawWrapped('SWIPE ANYWHERE ON THE SCREEN. THE MOVE FIRES AS SOON AS YOUR FINGER MOVES.', px + 12 * s, y, u, tw, PAL.cream) + 8 * s;
+  y += drawWrapped('IN THE AIR, SWIPE DOWN TO FAST-FALL BACK TO THE STREET.', px + 12 * s, y, u, tw, PAL.aquaPale) + 8 * s;
+  drawWrapped('DESKTOP: ARROW KEYS OR W / S', px + 12 * s, y, u, tw, PAL.dusk);
+}
+
+function drawHowToObstacles(px, py, pw, ph, t) {
+  const s = SCALE;
+  const rows = [
+    { type: 'spike', name: 'ROAD SPIKES', act: 'JUMP', col: PAL.aqua },
+    { type: 'lava', name: 'LIVE PUDDLE', act: 'JUMP', col: PAL.aqua },
+    { type: 'bird', name: 'CROW DRONE', act: 'DUCK OR JUMP', col: PAL.gold, extra: 'JUMP OVER IT = +8 PTS!' },
+    { type: 'long_wall', name: 'SHOP SHUTTER', act: 'DUCK ONLY', col: PAL.coral },
+  ];
+  const rowH = Math.min((ph - 16 * s) / rows.length, 140 * s), iconW = pw * 0.34;
+  rows.forEach((r, i) => {
+    const ry = py + 8 * s + i * rowH;
+    if (i % 2 === 0) { ctx.fillStyle = 'rgba(127,240,255,0.05)'; ctx.fillRect(px + 4 * s, ry, pw - 8 * s, rowH); }
+    drawHazardIcon(r.type, px + 8 * s + iconW / 2, ry + rowH - 12 * s, iconW - 8 * s, rowH - 20 * s, t);
+    const tx = px + iconW + 18 * s, mid = ry + rowH / 2 - (r.extra ? 12 * s : 6 * s);
+    drawPixelLine(r.name, tx, mid, 2 * s, PAL.cream, PAL.ink, null, 'left');
+    // action tag
+    const tagU = 1.8 * s, tagW = pixelLineWidth(r.act, tagU, false) + 12 * s, tagH = 19 * s, tagY = mid + 14 * s;
+    ctx.fillStyle = r.col; ctx.fillRect(tx, tagY, tagW, tagH);
+    ctx.fillStyle = PAL.navy; ctx.fillRect(tx + 2 * s, tagY + 2 * s, tagW - 4 * s, tagH - 4 * s);
+    drawPixelLine(r.act, tx + 6 * s, tagY + tagH / 2, tagU, r.col, null, null, 'left');
+    if (r.extra) drawPixelLine(r.extra, tx, tagY + tagH + 13 * s, 1.5 * s, '#7dff8a', PAL.ink, null, 'left');
+  });
+}
+
+function drawHowToPoints(px, py, pw, ph, t) {
+  const s = SCALE, tx = px + 78 * s, tw = pw - 90 * s, u = 1.7 * s, lh = u * 10;
+  const textH = (text, w) => wrapPixelText(text, u, w).length * lh;
+  const row = (badgeTxt, badgeCol, text, col) => ({
+    h: Math.max(textH(text, tw), 28 * s),
+    draw: (y) => { drawPixelLine(badgeTxt, px + 42 * s, y + 6 * s, 3 * s, badgeCol, PAL.ink, PAL.tomato); drawWrapped(text, tx, y, u, tw, col); },
+  });
+  const judgeIntro = 'DODGE AT THE LAST MOMENT FOR A BONUS:';
+  const blocks = [
+    row('+1', PAL.gold, 'EVERY SECOND YOU SURVIVE.', PAL.cream),
+    row('HIT', PAL.aqua, 'EVERY OBSTACLE YOU CLEAR ADDS 1 TO YOUR COMBO. EVERY 5TH HIT GETS A FANFARE!', PAL.cream),
+    { h: textH(judgeIntro, pw - 24 * s) + 78 * s, draw: (y) => {
+      const ih = drawWrapped(judgeIntro, px + 12 * s, y, u, pw - 24 * s, PAL.aquaPale);
+      const keys = ['NICE', 'GREAT', 'PERFECT'], colW = (pw - 16 * s) / 3, jy = y + ih + 22 * s;
+      keys.forEach((k, i) => {
+        const cx = px + 8 * s + colW * (i + 0.5), art = judgeArt(k).word;
+        const sc = Math.min(1, (colW - 8 * s) / (art.width / DPR));
+        const { h } = drawBaked(art, cx, jy, sc * (1 + 0.04 * Math.sin(t * 5 + i)));
+        drawPixelLine('+' + (i + 1), cx, jy + h / 2 + 14 * s, 2.4 * s, PAL.gold, PAL.navy, PAL.tomato);
+      });
+    } },
+    row('+8', '#7dff8a', 'JUMP CLEAN OVER A CROW DRONE. IT TAKES PERFECT TIMING!', PAL.cream),
+    { h: textH('TOP 10 SCORES JOIN THE RANKING. HOW FAR CAN YOU RUN?', pw - 24 * s),
+      draw: (y) => drawWrapped('TOP 10 SCORES JOIN THE RANKING. HOW FAR CAN YOU RUN?', px + 12 * s, y, u, pw - 24 * s, PAL.gold) },
+  ];
+  // spread the blocks evenly down the panel
+  const total = blocks.reduce((a, b) => a + b.h, 0);
+  const gap = Math.max(10 * s, Math.min(44 * s, (ph - total) / (blocks.length + 1)));
+  let y = py + gap;
+  for (const b of blocks) { b.draw(y); y += b.h + gap; }
+}
+
+function drawHowToScreen(t) {
+  const s = SCALE, PH = PLAY_H;
+  muteBtnRect = null; // no mute toggle here, so a tap on the header never mutes by accident
+  ctx.fillStyle = 'rgba(5,11,30,0.86)'; ctx.fillRect(0, 0, W, PH);
+
+  // header
+  let y = PH * 0.04;
+  const plate = cached('kana|howto', () => bakeKanaPlate('あそびかた', Math.round(13 * SCALE * DPR), PAL.tomato, PAL.cream, PAL.cream));
+  drawBaked(plate, W / 2, y, 1, true);
+  y += plate.height / DPR;
+  const title = cached('logo|howto', () => {
+    const uDev = Math.max(2, Math.round(Math.min(W * 0.82 / 68, 5.5 * SCALE) * DPR));
+    return bakeLogoWord('HOW TO PLAY', uDev, ['#ffffff', '#bffcff', '#35d6e8', '#1466c8'], '#0b2a66').canvas;
+  });
+  const th = title.height / DPR;
+  drawBaked(title, W / 2, y + th / 2, 1);
+  y += th + 4 * s;
+
+  // page name + dots
+  drawPixelLine(HOWTO_PAGES[howToPage], W / 2, y + 8 * s, 2 * s, PAL.gold, PAL.ink, PAL.tomato);
+  for (let i = 0; i < HOWTO_PAGES.length; i++) {
+    const dx = W / 2 + (i - 1) * 16 * s;
+    ctx.fillStyle = i === howToPage ? PAL.gold : '#2b4374';
+    ctx.fillRect(dx - 4 * s, y + 22 * s, 8 * s, 8 * s);
+  }
+  y += 38 * s;
+
+  // footer buttons
+  const bh = 38 * s, by = PH - 14 * s - bh, bw = (W * 0.84 - 10 * s) / 2, bx = W * 0.08;
+  howToBackRect = { x: bx, y: by, w: bw, h: bh };
+  howToNextRect = { x: bx + bw + 10 * s, y: by, w: bw, h: bh };
+  drawArcadeButton(howToBackRect, howToPage === 0 ? 'MENU' : 'BACK', { frame: PAL.aqua, key: PAL.coral, unit: 2 * s });
+  drawArcadeButton(howToNextRect, howToPage === HOWTO_PAGES.length - 1 ? 'PLAY!' : 'NEXT', { unit: 2 * s });
+
+  // panel + sliding page content
+  const px = W * 0.05, pw = W * 0.9, py = y, ph = by - 12 * s - y;
+  ctx.fillStyle = 'rgba(10,21,48,0.95)'; ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = PAL.amber; ctx.lineWidth = 2.5 * s; ctx.strokeRect(px, py, pw, ph);
+  const slide = easeOutCubic(clamp01(howToT / 0.22));
+  ctx.save();
+  ctx.beginPath(); ctx.rect(px + 2 * s, py + 2 * s, pw - 4 * s, ph - 4 * s); ctx.clip();
+  ctx.globalAlpha = slide;
+  ctx.translate((1 - slide) * W * 0.2 * howToDir, 0);
+  if (howToPage === 0) drawHowToControls(px, py, pw, ph, t);
+  else if (howToPage === 1) drawHowToObstacles(px, py, pw, ph, t);
+  else drawHowToPoints(px, py, pw, ph, t);
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }

@@ -286,7 +286,7 @@ function drawWorld(t) {
     for (const sg of wc.shops.signs) {
       const sx = base + sg.x;
       if (sx > W || sx + sg.w < 0) continue;
-      let a = 0.12 + 0.06 * Math.sin(t * 6 + sg.x);
+      let a = 0.06 + 0.03 * Math.sin(t * 6 + sg.x); // softer glow so neon never competes with hazards
       if (sg.broken && Math.sin(t * 17 + sg.x) * Math.sin(t * 5.3) > 0.55) continue;
       ctx.fillStyle = sg.color;
       ctx.globalAlpha = a;
@@ -304,7 +304,19 @@ function drawWorld(t) {
   }
 
   drawPolesAndWires(hz);
+  drawDepthDim(hz);
   drawTile(wc.road, LAYER.road, hz);
+}
+
+// Pushes the whole city back: a cool navy veil that deepens toward the street, so the warm,
+// outlined hazards in the lane always read as foreground. The road itself is left untouched.
+function drawDepthDim(hz) {
+  const dim = ctx.createLinearGradient(0, 0, 0, hz);
+  dim.addColorStop(0, 'rgba(8,20,51,0.18)');
+  dim.addColorStop(0.5, 'rgba(8,20,51,0.36)');
+  dim.addColorStop(1, 'rgba(8,20,51,0.6)');
+  ctx.fillStyle = dim;
+  ctx.fillRect(0, 0, W, hz);
 }
 
 function drawPolesAndWires(hz) {

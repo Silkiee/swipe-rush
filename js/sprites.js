@@ -110,12 +110,36 @@ function drawPlayer(t) {
 }
 
 // ---------------------------------------------------------------------
-// HAZARDS
+// HAZARDS — foreground styling: warm reds/golds against the cool, dimmed city, a cream rim
+// light around every silhouette and a contact shadow on the street, so they never read as
+// scenery. Footprints and hitboxes are unchanged.
 // ---------------------------------------------------------------------
+const HAZ = {
+  rim: PAL.cream, hot: '#ff8a6b', red: PAL.coral, deep: PAL.tomato, dark: '#8e1424',
+  gold: PAL.gold, amber: PAL.amber,
+};
+
+// Contact shadow on the street — ties a hazard to the runner's lane.
+function hazardShadow(cx, halfW, s) {
+  ctx.fillStyle = 'rgba(5,11,30,0.6)';
+  ctx.beginPath();
+  ctx.ellipse(cx, GROUND - 2 * s, halfW, 4 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Cream rim: a wide stroke drawn BEFORE the fill, so only the outer half shows as a halo.
+function rimStroke(pathFn, s, width) {
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeStyle = HAZ.rim; ctx.lineWidth = (width || 6) * s;
+  pathFn(); ctx.stroke();
+  ctx.restore();
+}
+
 function hazardStripes(x, y, w, h, s) {
   ctx.save();
   ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-  ctx.fillStyle = PAL.amber; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = PAL.gold; ctx.fillRect(x, y, w, h);
   ctx.fillStyle = PAL.ink;
   const step = 8 * s;
   for (let k = -h; k < w + h; k += step * 2) {
@@ -129,20 +153,25 @@ function hazardStripes(x, y, w, h, s) {
 function drawRoadSpikes(o, s) {
   const baseH = 8 * s, n = 3, sw = o.w / n;
   const bottom = o.top + o.h;
-  ctx.lineJoin = 'miter';
-  const chrome = ctx.createLinearGradient(0, o.top, 0, bottom - baseH);
-  chrome.addColorStop(0, '#ffffff'); chrome.addColorStop(0.5, '#c4d4f0'); chrome.addColorStop(1, '#5f7bab');
-  for (let i = 0; i < n; i++) {
+  const cone = (i) => {
     const x0 = o.x + i * sw;
     ctx.beginPath();
     ctx.moveTo(x0 + 1 * s, bottom - baseH);
     ctx.lineTo(x0 + sw / 2, o.top + 1 * s);
     ctx.lineTo(x0 + sw - 1 * s, bottom - baseH);
     ctx.closePath();
-    ctx.fillStyle = chrome; ctx.fill();
+  };
+  hazardShadow(o.x + o.w / 2, o.w * 0.6, s);
+  rimStroke(() => { for (let i = 0; i < n; i++) { cone(i); ctx.stroke(); } ctx.beginPath(); ctx.rect(o.x, bottom - baseH, o.w, baseH); }, s);
+  const red = ctx.createLinearGradient(0, o.top, 0, bottom - baseH);
+  red.addColorStop(0, '#ffd2c4'); red.addColorStop(0.3, HAZ.red); red.addColorStop(1, HAZ.dark);
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < n; i++) {
+    cone(i);
+    ctx.fillStyle = red; ctx.fill();
     ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s; ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.9)';                     // glint edge
-    ctx.fillRect(x0 + sw / 2 - 1 * s, o.top + 5 * s, 1.5 * s, (o.h - baseH) * 0.5);
+    ctx.fillRect(o.x + i * sw + sw / 2 - 1 * s, o.top + 5 * s, 1.5 * s, (o.h - baseH) * 0.5);
   }
   hazardStripes(o.x, bottom - baseH, o.w, baseH, s);
   ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s;
@@ -151,37 +180,49 @@ function drawRoadSpikes(o, s) {
 
 function drawLivePuddle(o, s, t) {
   const bottom = o.top + o.h, poolH = 8 * s;
-  // glow
+  const pool = () => roundRectPath(ctx, o.x, bottom - poolH, o.w, poolH, 4 * s);
+  // warm electric glow
+  const gcx = o.x + o.w / 2, gcy = bottom - poolH;
+  const glow = ctx.createRadialGradient(gcx, gcy, 0, gcx, gcy, o.w * 0.7);
+  glow.addColorStop(0, 'rgba(255,210,90,0.24)'); glow.addColorStop(1, 'rgba(255,210,90,0)');
   ctx.globalCompositeOperation = 'lighter';
-  ctx.fillStyle = 'rgba(127,240,255,0.18)';
-  ctx.fillRect(o.x - 4 * s, o.top - 4 * s, o.w + 8 * s, o.h + 6 * s);
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.ellipse(gcx, gcy, o.w * 0.7, o.h * 1.2, 0, 0, Math.PI * 2); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
   // puddle
-  ctx.fillStyle = '#1466c8';
-  roundRectPath(ctx, o.x, bottom - poolH, o.w, poolH, 4 * s); ctx.fill();
-  ctx.fillStyle = PAL.teal; ctx.fillRect(o.x + 4 * s, bottom - poolH + 2 * s, o.w - 8 * s, 2 * s);
+  rimStroke(pool, s);
+  ctx.fillStyle = PAL.teal; pool(); ctx.fill();
+  ctx.fillStyle = PAL.aquaPale; ctx.fillRect(o.x + 4 * s, bottom - poolH + 2 * s, o.w - 8 * s, 2 * s);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(o.x + 10 * s + Math.sin(t * 3) * 4 * s, bottom - poolH + 2 * s, 8 * s, 1.5 * s);
-  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s;
-  roundRectPath(ctx, o.x, bottom - poolH, o.w, poolH, 4 * s); ctx.stroke();
-  // downed cable snaking into the water
-  ctx.strokeStyle = PAL.ink; ctx.lineWidth = 3 * s; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(o.x + o.w - 6 * s, o.top); ctx.quadraticCurveTo(o.x + o.w + 4 * s, o.top + o.h * 0.6, o.x + o.w * 0.7, bottom - poolH / 2); ctx.stroke();
+  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s; pool(); ctx.stroke();
+  // downed cable snaking into the water (cream under-stroke so it shows on the asphalt)
+  const cable = () => { ctx.beginPath(); ctx.moveTo(o.x + o.w - 6 * s, o.top); ctx.quadraticCurveTo(o.x + o.w + 4 * s, o.top + o.h * 0.6, o.x + o.w * 0.7, bottom - poolH / 2); };
+  rimStroke(cable, s, 6);
+  ctx.strokeStyle = PAL.ink; ctx.lineWidth = 3 * s; ctx.lineCap = 'round'; cable(); ctx.stroke();
   ctx.lineCap = 'butt';
-  // crackling arcs — re-rolled every few frames
+  // warning triangle at the near edge
+  const tx = o.x + 9 * s, tb = bottom - poolH - 1 * s, th = 13 * s;
+  const tri = () => { ctx.beginPath(); ctx.moveTo(tx, tb - th); ctx.lineTo(tx + 8 * s, tb); ctx.lineTo(tx - 8 * s, tb); ctx.closePath(); };
+  rimStroke(tri, s, 5);
+  ctx.fillStyle = PAL.gold; tri(); ctx.fill();
+  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5 * s; tri(); ctx.stroke();
+  ctx.fillStyle = OUTLINE;
+  ctx.fillRect(tx - 1 * s, tb - th + 4 * s, 2 * s, 5 * s); ctx.fillRect(tx - 1 * s, tb - 3 * s, 2 * s, 2 * s);
+  // crackling arcs — re-rolled every few frames, hot gold/white
   const frame = Math.floor(t * 16) + (o.seed || 0);
   const rnd = seededRandom(frame * 7919 + 1);
   for (let b = 0; b < 3; b++) {
-    const x = o.x + o.w * (0.18 + b * 0.32) + (rnd() - 0.5) * 8 * s;
+    const x = o.x + o.w * (0.3 + b * 0.25) + (rnd() - 0.5) * 8 * s;
     const pts = [[x, bottom - poolH]];
     const segs = 4;
     for (let k = 1; k <= segs; k++) pts.push([x + (rnd() - 0.5) * 14 * s, bottom - poolH - (o.h - poolH) * (k / segs)]);
-    for (const [col, lw] of [[PAL.aqua, 4 * s], ['#ffffff', 1.5 * s]]) {
+    for (const [col, lw] of [[PAL.gold, 4 * s], ['#ffffff', 1.5 * s]]) {
       ctx.strokeStyle = col; ctx.lineWidth = lw;
       ctx.beginPath(); pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.stroke();
     }
   }
-  ctx.fillStyle = PAL.gold;
+  ctx.fillStyle = '#ffffff';
   for (let k = 0; k < 4; k++) ctx.fillRect(o.x + rnd() * o.w, o.top + rnd() * (o.h - poolH), 2 * s, 2 * s);
 }
 
@@ -189,9 +230,9 @@ function drawCrowDrone(o, s, t) {
   const cx = o.x + o.w / 2, visH = o.h * BIRD_HITBOX_FRAC;
   const cy = o.top + visH * 0.58;
   const flap = Math.sin(t * 14 + (o.seed || 0));
+  hazardShadow(cx, o.w * 0.32, s);
   ctx.lineJoin = 'round';
-  // wings
-  for (const dir of [-1, 1]) {
+  const wing = (dir) => {
     const tipX = cx + dir * (o.w / 2 - 1 * s);
     const tipY = cy - flap * visH * 0.42;
     ctx.beginPath();
@@ -201,55 +242,60 @@ function drawCrowDrone(o, s, t) {
     ctx.lineTo(cx + dir * o.w * 0.3, cy + 4 * s - flap * visH * 0.1);
     ctx.lineTo(cx + dir * 6 * s, cy + 5 * s);
     ctx.closePath();
-    ctx.fillStyle = '#1c2442'; ctx.fill();
-    ctx.strokeStyle = PAL.aqua; ctx.lineWidth = 4 * s; ctx.stroke();        // neon rim so it reads against the city
-    ctx.fillStyle = '#1c2442'; ctx.fill();
+    return [tipX, tipY];
+  };
+  const body = () => { ctx.beginPath(); ctx.ellipse(cx, cy, 13 * s, 9 * s, 0, 0, Math.PI * 2); };
+  const head = () => { ctx.beginPath(); ctx.arc(cx - 11 * s, cy - 4 * s, 7 * s, 0, Math.PI * 2); };
+  // one rim pass for the whole silhouette
+  rimStroke(() => { wing(-1); ctx.stroke(); wing(1); ctx.stroke(); body(); ctx.stroke(); head(); }, s);
+  for (const dir of [-1, 1]) {
+    const [tipX, tipY] = wing(dir);
+    ctx.fillStyle = HAZ.red; ctx.fill();
     ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5 * s; ctx.stroke();
-    ctx.strokeStyle = 'rgba(127,240,255,0.55)'; ctx.lineWidth = 1 * s;     // feather sheen
+    ctx.strokeStyle = 'rgba(255,243,214,0.75)'; ctx.lineWidth = 1 * s;     // feather sheen
     ctx.beginPath(); ctx.moveTo(cx + dir * 10 * s, cy - 2 * s); ctx.lineTo(tipX - dir * 6 * s, tipY + 3 * s); ctx.stroke();
   }
-  // body
-  ctx.strokeStyle = PAL.aqua; ctx.lineWidth = 4 * s;
-  ctx.beginPath(); ctx.ellipse(cx, cy, 13 * s, 9 * s, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx - 11 * s, cy - 4 * s, 7 * s, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = '#141a2e'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5 * s;
-  ctx.beginPath(); ctx.ellipse(cx, cy, 13 * s, 9 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  // head + beak facing the runner (left)
-  ctx.beginPath(); ctx.arc(cx - 11 * s, cy - 4 * s, 7 * s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = PAL.amber;
+  ctx.fillStyle = HAZ.deep; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5 * s;
+  body(); ctx.fill(); ctx.stroke();
+  head(); ctx.fill(); ctx.stroke();
+  // beak facing the runner (left)
+  ctx.fillStyle = PAL.gold;
   ctx.beginPath(); ctx.moveTo(cx - 16 * s, cy - 6 * s); ctx.lineTo(cx - 26 * s, cy - 2 * s); ctx.lineTo(cx - 16 * s, cy); ctx.closePath(); ctx.fill();
   ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5 * s; ctx.stroke();
   // glowing visor eye
-  ctx.fillStyle = PAL.coral; ctx.fillRect(cx - 15 * s, cy - 8 * s, 6 * s, 3 * s);
+  ctx.fillStyle = PAL.gold; ctx.fillRect(cx - 15 * s, cy - 8 * s, 6 * s, 3 * s);
   ctx.fillStyle = '#ffffff'; ctx.fillRect(cx - 14 * s, cy - 7.5 * s, 2 * s, 1.5 * s);
   // rotor
   const blade = Math.abs(Math.cos(t * 40)) * 14 * s + 3 * s;
-  ctx.fillStyle = '#5f7bab'; ctx.fillRect(cx - 1 * s, cy - 15 * s, 2 * s, 6 * s);
-  ctx.fillStyle = '#c4d4f0'; ctx.fillRect(cx - blade, cy - 16 * s, blade * 2, 2 * s);
+  ctx.fillStyle = OUTLINE; ctx.fillRect(cx - 1 * s, cy - 15 * s, 2 * s, 6 * s);
+  ctx.fillStyle = PAL.cream; ctx.fillRect(cx - blade, cy - 16 * s, blade * 2, 2 * s);
   // blinking tail LED
-  if (Math.sin(t * 8) > 0) { ctx.fillStyle = PAL.gold; ctx.fillRect(cx + 12 * s, cy - 1 * s, 3 * s, 3 * s); }
+  if (Math.sin(t * 8) > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(cx + 12 * s, cy - 1 * s, 3 * s, 3 * s); }
 }
 
 function drawShopShutter(o, s) {
   const bottom = o.top + o.h, rail = 5 * s;
-  // corrugated steel
-  ctx.fillStyle = '#8fa3c4'; ctx.fillRect(o.x, o.top, o.w, o.h);
+  hazardShadow(o.x + o.w / 2, o.w * 0.55, s);
+  rimStroke(() => { ctx.beginPath(); ctx.rect(o.x, o.top, o.w, o.h); }, s);
+  // red corrugated steel
+  ctx.fillStyle = HAZ.deep; ctx.fillRect(o.x, o.top, o.w, o.h);
   const rib = 6 * s;
-  for (let y = o.top; y < bottom - 12 * s; y += rib) {
-    ctx.fillStyle = '#c8d6ee'; ctx.fillRect(o.x, y, o.w, Math.max(1, 1.5 * s));
-    ctx.fillStyle = '#5f7bab'; ctx.fillRect(o.x, y + rib - 2 * s, o.w, Math.max(1, 1.5 * s));
+  for (let y = o.top + 6 * s; y < bottom - 16 * s; y += rib) {
+    ctx.fillStyle = HAZ.hot; ctx.fillRect(o.x, y, o.w, Math.max(1, 1.5 * s));
+    ctx.fillStyle = HAZ.dark; ctx.fillRect(o.x, y + rib - 2 * s, o.w, Math.max(1, 1.5 * s));
   }
+  hazardStripes(o.x, o.top, o.w, 6 * s, s);                       // top warning band
   // spray-paint tag
   const tagY = bottom - 70 * s;
-  ctx.fillStyle = 'rgba(255,90,79,0.85)';
+  ctx.fillStyle = 'rgba(255,243,214,0.85)';
   forEachGlyphPixel('SR', (px, py) => ctx.fillRect(o.x + 16 * s + px * 3 * s + py * 0.6 * s, tagY + py * 3 * s, 3 * s, 3 * s));
   // closed-today notice
   const note = cached('kana|teikyu', () => bakeKanaPlate('定休日', Math.round(9 * SCALE * DPR), PAL.cream, PAL.tomato, PAL.tomato));
   drawBaked(note, o.x + o.w / 2, bottom - 38 * s);
-  // bottom bar + handle + hazard edge
-  ctx.fillStyle = '#3b4f7a'; ctx.fillRect(o.x, bottom - 14 * s, o.w, 9 * s);
-  ctx.fillStyle = '#c8d6ee'; ctx.fillRect(o.x + o.w / 2 - 8 * s, bottom - 11 * s, 16 * s, 3 * s);
-  hazardStripes(o.x, bottom - 5 * s, o.w, 5 * s, s);
+  // bottom bar + handle + chunky hazard edge (the line you duck under)
+  ctx.fillStyle = HAZ.dark; ctx.fillRect(o.x, bottom - 16 * s, o.w, 8 * s);
+  ctx.fillStyle = PAL.cream; ctx.fillRect(o.x + o.w / 2 - 8 * s, bottom - 13 * s, 16 * s, 3 * s);
+  hazardStripes(o.x, bottom - 8 * s, o.w, 8 * s, s);
   // rails + outline
   ctx.fillStyle = OUTLINE;
   ctx.fillRect(o.x, o.top, rail, o.h); ctx.fillRect(o.x + o.w - rail, o.top, rail, o.h);
