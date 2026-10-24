@@ -6,6 +6,7 @@
 
 let leaderboardBtnRect = null, backToMenuRect = null;
 let submitBtnRect = null, skipBtnRect = null, nicknameBoxRect = null;
+let playAgainBtnRect = null, rankingBtnRect = null;
 let muteBtnRect = null;
 let howToBtnRect = null, howToBackRect = null, howToNextRect = null;
 
@@ -426,33 +427,49 @@ function drawGameOverScreen(t) {
   drawPixelLine(placement, W / 2, y, 1.9 * s, PAL.gold, PAL.navy, null);
   y += 22 * s;
 
-  if (!isHighScoreEntry) {
+  submitBtnRect = skipBtnRect = nicknameBoxRect = playAgainBtnRect = rankingBtnRect = null;
+  if (!rankCheckDone) {
     if (Math.floor(t * 3) % 2 === 0) drawPixelLine('LOADING RANKING...', W / 2, y + 6 * s, 1.6 * s, PAL.dusk, null, null);
-    submitBtnRect = skipBtnRect = nicknameBoxRect = null;
     ctx.globalAlpha = 1;
     return;
   }
+  const live = t > GAME_OVER_INPUT_DELAY;                 // ignore taps from the swipe that caused the crash
+  const colW = W * 0.84, colX = W / 2 - colW / 2, bh = 36 * s, gap = 10 * s;
 
-  // nickname entry
-  drawPixelLine('TOP 10! ENTER NICKNAME:', W / 2, y, 1.7 * s, PAL.cream, null, null);
-  y += 12 * s;
-  const boxW = W * 0.6, boxH = 34 * s, boxX = W / 2 - boxW / 2;
-  nicknameBoxRect = { x: boxX, y, w: boxW, h: boxH };
-  ctx.fillStyle = PAL.ink; ctx.fillRect(boxX, y, boxW, boxH);
-  ctx.strokeStyle = PAL.gold; ctx.lineWidth = 2 * s; ctx.strokeRect(boxX, y, boxW, boxH);
-  const caretOn = Math.floor(performance.now() / 400) % 2 === 0;
-  const shown = (nicknameInput || '') + (caretOn && !nicknameSubmitted ? '_' : ' ');
-  drawPixelLine(shown.replace(/[^A-Z0-9 _]/g, ''), W / 2, y + boxH / 2, 2.4 * s, '#ffffff', null, null);
-  y += boxH + 12 * s;
+  if (isHighScoreEntry) {
+    // nickname box with SUBMIT on its right
+    drawPixelLine('TOP 10! ENTER NICKNAME:', W / 2, y, 1.7 * s, PAL.cream, null, null);
+    y += 12 * s;
+    const boxH = bh, subW = colW * 0.32, boxW = colW - subW - gap;
+    nicknameBoxRect = { x: colX, y, w: boxW, h: boxH };
+    ctx.fillStyle = PAL.ink; ctx.fillRect(colX, y, boxW, boxH);
+    ctx.strokeStyle = PAL.gold; ctx.lineWidth = 2 * s; ctx.strokeRect(colX, y, boxW, boxH);
+    const caretOn = Math.floor(performance.now() / 400) % 2 === 0;
+    const shown = (nicknameInput || '') + (caretOn && !nicknameSubmitted ? '_' : ' ');
+    drawPixelLine(shown.replace(/[^A-Z0-9 _]/g, ''), colX + boxW / 2, y + boxH / 2, 2.4 * s, '#ffffff', null, null);
+    const subR = { x: colX + boxW + gap, y, w: subW, h: boxH };
+    if (live) submitBtnRect = subR;
+    drawArcadeButton(subR, 'SUBMIT', { disabled: nicknameSubmitted, frame: PAL.gold, unit: 1.7 * s });
+    y += boxH + 14 * s;
+  }
 
-  const gap = 10 * s, pairW = W * 0.72, bh = 36 * s;
-  const sw = pairW * 0.44, kw = pairW - sw - gap, bx = W / 2 - pairW / 2;
-  submitBtnRect = { x: bx, y, w: sw, h: bh };
-  skipBtnRect = { x: bx + sw + gap, y, w: kw, h: bh };
-  drawArcadeButton(submitBtnRect, 'SUBMIT', { disabled: nicknameSubmitted, frame: PAL.gold, unit: 1.8 * s });
-  drawArcadeButton(skipBtnRect, 'SKIP TO MENU', { frame: PAL.coral, key: PAL.aqua, unit: 1.6 * s });
-  y += bh + 14 * s;
-  drawPixelLine(nicknameSubmitted ? 'SUBMITTING...' : 'TAP BUTTONS OR USE ENTER / ESC', W / 2, y, 1.3 * s, PAL.dusk, null, null);
+  // stacked actions: PLAY AGAIN, (VIEW RANKING), BACK TO MENU
+  const stack = [['play', 'PLAY AGAIN', { frame: '#7dff8a', key: PAL.gold, text: '#ffffff', unit: 2.1 * s }]];
+  if (!isHighScoreEntry) stack.push(['rank', 'VIEW RANKING', { unit: 1.8 * s }]);
+  stack.push(['menu', 'BACK TO MENU', { frame: PAL.coral, key: PAL.aqua, unit: 1.8 * s }]);
+  for (const [id, label, opts] of stack) {
+    // hug the label: text width + 10px padding each side inside the frame, centred
+    const frameBd = Math.max(2, Math.round(3 * s));
+    const bw = Math.min(colW, pixelLineWidth(label, opts.unit, false) + 2 * (10 * s + frameBd));
+    const r = { x: W / 2 - bw / 2, y, w: bw, h: id === 'play' ? bh + 4 * s : bh };
+    if (live) { if (id === 'play') playAgainBtnRect = r; else if (id === 'rank') rankingBtnRect = r; else skipBtnRect = r; }
+    drawArcadeButton(r, label, opts);
+    y += r.h + gap;
+  }
+  y += 4 * s;
+  const hint = nicknameSubmitted && isHighScoreEntry ? 'SUBMITTING...'
+    : isHighScoreEntry ? 'ENTER = SUBMIT  /  ESC = MENU' : 'SPACE = PLAY AGAIN  /  ESC = MENU';
+  drawPixelLine(hint, W / 2, y, 1.3 * s, PAL.dusk, null, null);
   ctx.globalAlpha = 1;
 }
 

@@ -74,7 +74,7 @@ function computePlayerRank(sc) {
   return rank;
 }
 
-async function submitHighScore(name, sc) {
+async function submitHighScore(name, sc, showRanking = true) {
   try {
     const res = await fetch(`${SUPABASE_URL}leaderboard`, {
       method: 'POST',
@@ -89,7 +89,8 @@ async function submitHighScore(name, sc) {
     leaderboardData = leaderboardData.slice(0, 10);
   }
   await fetchLeaderboard();
-  goToLeaderboard();
+  // only jump to the ranking if the player is still on the results (not already on a new run)
+  if (showRanking && state === 'GAME_OVER') goToLeaderboard();
 }
 
 function goToLeaderboard() { state = 'LEADERBOARD_SCREEN'; leaderboardT = 0; }
@@ -120,6 +121,22 @@ function submitNicknameIfReady() {
   const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
   sfxUiBlip();
   submitHighScore(finalName, score);
+}
+
+// PLAY AGAIN: straight into a new run. An unsubmitted Top 10 score is saved in the background first.
+function playAgain() {
+  if (state !== 'GAME_OVER') return;
+  if (isHighScoreEntry && !nicknameSubmitted) {
+    const finalName = (nicknameInput.trim() || 'ANON').slice(0, 10).toUpperCase();
+    submitHighScore(finalName, score, false);
+  }
+  hiddenInput.blur();
+  hiddenInput.value = '';
+  nicknameInput = '';
+  nicknameSubmitted = false;
+  isHighScoreEntry = false;
+  ensureAudio();
+  startRun();
 }
 
 function skipToMenu() {
@@ -281,6 +298,8 @@ canvas.addEventListener('pointerup', (e) => {
   }
   if (state === 'GAME_OVER') {
     if (pointInRect(endX, endY, submitBtnRect)) { submitNicknameIfReady(); return; }
+    if (pointInRect(endX, endY, playAgainBtnRect)) { playAgain(); return; }
+    if (pointInRect(endX, endY, rankingBtnRect)) { sfxUiBlip(); goToLeaderboard(); return; }
     if (pointInRect(endX, endY, skipBtnRect)) { sfxUiBlip(); skipToMenu(); return; }
     return;
   }
@@ -305,6 +324,11 @@ window.addEventListener('keydown', (e) => {
       nicknameInput += e.key.toUpperCase();
     }
     return;
+  }
+  // GAME_OVER outside the Top 10: Space / Enter = play again, Esc = back to menu.
+  if (state === 'GAME_OVER' && rankCheckDone && gameOverT > GAME_OVER_INPUT_DELAY) {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); playAgain(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); skipToMenu(); return; }
   }
   if (e.key === 'm' || e.key === 'M') { toggleMute(); return; }
 
@@ -438,9 +462,7 @@ function update(dt) {
   }
 
   if (state === 'GAME_OVER') {
-    gameOverT += dt;
-    // Not in the Top 10: show the results for a moment, then slide to the ranking.
-    if (rankCheckDone && !isHighScoreEntry && gameOverT > 2.6) goToLeaderboard();
+    gameOverT += dt; // results stay up until the player picks PLAY AGAIN / RANKING / MENU
     return;
   }
   if (state === 'LEADERBOARD_SCREEN') { leaderboardT += dt; return; }

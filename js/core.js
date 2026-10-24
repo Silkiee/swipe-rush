@@ -85,6 +85,7 @@ const JUDGE_WINDOWS = [
   { max: 0.35, key: 'NICE',    bonus: 1 },
 ];
 
+const GAME_OVER_INPUT_DELAY = 0.8; // s — game over buttons ignore taps until the panel has settled
 const BIRD_JUMP_BONUS = 8;          // jumping clean over a crow drone (replaces NICE/GREAT/PERFECT)
 
 const HIGH_SCORE_KEY = 'swipeRushHighScore';
