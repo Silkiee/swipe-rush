@@ -12,7 +12,6 @@ let highScore = 0;
 try { highScore = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0; } catch (e) { highScore = 0; }
 
 let player, obstacles = [], score, scoreTimer, spawnTimer, beatHighScoreThisRun, recordFlashT, ripPhrase;
-let blinkTimer, blinkOn, stepPhase;
 let runTime = 0, lastActionT = -99, combo = 0;
 let level = 1, speedNow = SCROLL_SPEED_BASE;   // speed level 1..4 and current scroll speed (px/s @ SCALE 1)
 let downHeld = false;                          // finger / Down key still held after a swipe down (hold-to-duck)
@@ -41,9 +40,6 @@ function resetGame() {
   spawnTimer = 0.9;
   beatHighScoreThisRun = false;
   recordFlashT = 0;
-  blinkTimer = 2 + Math.random() * 2;
-  blinkOn = false;
-  stepPhase = 0;
   runTime = 0; lastActionT = -99; combo = 0;
   level = 1; speedNow = LEVEL_SPEEDS[0]; downHeld = false; pendingType = null;
   resetFx();
@@ -598,12 +594,6 @@ function update(dt) {
   updateWorld(dt, state !== 'GAME_OVER');
   updateFx(dt);
 
-  blinkTimer -= dt;
-  if (blinkTimer <= 0) {
-    blinkOn = !blinkOn;
-    blinkTimer = blinkOn ? 0.12 : (1.5 + Math.random() * 2.2);
-  }
-
   if (state === 'GAME_OVER') {
     gameOverT += dt; // results stay up until the player picks PLAY AGAIN / RANKING / MENU
     return;
@@ -612,7 +602,6 @@ function update(dt) {
   if (state === 'HOW_TO_PLAY') { howToT += dt; return; }
   if (state !== 'playing') return;
 
-  stepPhase += dt * 10;
   if (countdownT > 0) { updateCountdown(dt); updatePlayerPhysics(dt); return; }
   if (goT >= 0) { goT += dt; if (goT > GO_SHOW) goT = -1; }
   runTime += dt;

@@ -18,7 +18,8 @@ function obstacleHitbox(o) {
   return { x: o.x, y: o.top, w: o.w, h: o.h };
 }
 
-// Matches the body drawn in drawPlayer(); landing squish is cosmetic and excluded so the hitbox never wobbles.
+// Covers the runner's body plus its feet (drawMascot); the run bounce and landing squish are
+// cosmetic and excluded so the hitbox never wobbles.
 function playerHitbox() {
   const cx = runnerX();
   const w = (player.ducking ? PLAYER_DUCK_W : PLAYER_STAND_W) * SCALE;
@@ -28,85 +29,102 @@ function playerHitbox() {
 }
 
 // ---------------------------------------------------------------------
-// RUNNER — the orange blob, now with a red hachimaki headband
+// RUNNER — the orange blob with a red hachimaki headband. One drawing for
+// the title, the countdown glide, the run and the How to Play cards.
 // ---------------------------------------------------------------------
-function drawPlayer(t) {
-  const s = SCALE;
-  const cx = runnerX();
-  const squish = Math.max(0, player.squish);
-  let w, h;
-  if (player.ducking) { w = PLAYER_DUCK_W * s; h = PLAYER_DUCK_H * s; }
-  else { w = PLAYER_STAND_W * s * (1 - squish * 0.15); h = PLAYER_STAND_H * s * (1 + squish * 0.12) - squish * 4 * s; }
-  const bottom = GROUND + player.y;
-  const top = bottom - h;
-  const left = cx - w / 2;
+const RUN_CADENCE = 14;  // stride speed (radians per second of the run cycle)
+const MASCOT_LEAN = 0.12; // forward lean while standing / running / jumping
+const FOOT_GAP = 4;      // the body floats this far above the feet line; the feet fill the gap
 
-  // ground shadow (shrinks while airborne)
-  const air = clamp01(-player.y / (120 * s));
-  ctx.fillStyle = `rgba(5,11,30,${0.45 * (1 - air * 0.6)})`;
+// cx: centre x; ground: street line; y: height offset (<=0 airborne); t: seconds (absolute time,
+// so the run cycle carries on unbroken from the title into the run).
+// o: { onGround, ducking, squish }
+function drawMascot(cx, ground, y, t, o) {
+  const s = SCALE, run = t * RUN_CADENCE, bottom = ground + y;
+  const running = o.onGround && !o.ducking;
+  const bounce = running ? Math.abs(Math.sin(run)) * 4 * s : 0;
+  const squish = Math.max(0, o.squish || 0);
+  const air = clamp01(-y / (120 * s));
+  const standW = PLAYER_STAND_W * s;
+
+  // ground shadow (shrinks while airborne and at the top of each bounce)
+  ctx.fillStyle = `rgba(5,11,30,${0.5 * (1 - air * 0.6)})`;
   ctx.beginPath();
-  ctx.ellipse(cx, GROUND - 1 * s, (w / 2 + 2 * s) * (1 - air * 0.5), 3.5 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, ground + 1 * s, Math.max(4 * s, (standW / 2 + 5 * s - bounce) * (1 - air * 0.5)), 4 * s, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // headband tails flutter behind (drawn first so the body overlaps the knot)
-  const bandY = top + h * (player.ducking ? 0.22 : 0.2);
-  const flap = Math.sin(t * 22) * 3 * s;
-  const lift = player.onGround ? 0 : -6 * s;
-  ctx.fillStyle = PAL.tomato;
-  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s; ctx.lineJoin = 'round';
-  for (const k of [0, 1]) {
-    ctx.beginPath();
-    ctx.moveTo(left + 2 * s, bandY + k * 3 * s);
-    ctx.lineTo(left - (14 + k * 6) * s, bandY + flap * (k ? -1 : 1) + lift + (k ? 5 : -1) * s);
-    ctx.lineTo(left - (12 + k * 6) * s, bandY + flap * (k ? -1 : 1) + lift + (k ? 10 : 4) * s);
-    ctx.lineTo(left + 2 * s, bandY + 5 * s + k * 2 * s);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  }
-
-  // body
-  ctx.fillStyle = '#ffb84d';
-  roundRectPath(ctx, left, top, w, h, 8 * s); ctx.fill();
-  ctx.save();
-  roundRectPath(ctx, left, top, w, h, 8 * s); ctx.clip();
-  ctx.fillStyle = '#e8902e'; ctx.fillRect(left, top + h * 0.72, w, h * 0.3);            // belly shade
-  ctx.fillStyle = '#ffd89a'; ctx.fillRect(left + 4 * s, top + 3 * s, w * 0.35, 3 * s);   // shine
-  // headband
-  ctx.fillStyle = PAL.tomato; ctx.fillRect(left, bandY, w, 6 * s);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(cx - 3 * s, bandY + 1 * s, 6 * s, 4 * s);      // white disc
-  ctx.fillStyle = PAL.tomato; ctx.fillRect(cx - 1.5 * s, bandY + 2 * s, 3 * s, 2 * s);
-  ctx.restore();
-  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2.5 * s;
-  roundRectPath(ctx, left, top, w, h, 8 * s); ctx.stroke();
-
-  // eyes looking ahead (to the right)
-  const eyeY = bandY + 6 * s + (player.ducking ? 3 * s : 6 * s);
-  const eye = Math.max(4, 6 * s);
-  for (const ex of [cx + w * 0.02, cx + w * 0.3]) {
-    if (blinkOn && !player.ducking) {
-      ctx.fillStyle = OUTLINE; ctx.fillRect(ex - eye / 2, eyeY, eye, 2 * s);
-    } else {
-      ctx.fillStyle = '#fff'; ctx.fillRect(ex - eye / 2, eyeY - eye / 2, eye, eye);
-      ctx.fillStyle = '#111'; ctx.fillRect(ex, eyeY - eye * 0.25, eye * 0.5, eye * 0.5);
+  // kicked-up dust behind the feet while running
+  if (running) {
+    ctx.fillStyle = 'rgba(255,243,214,0.85)';
+    for (let i = 0; i < 3; i++) {
+      const ph = ((t * 2.2 + i / 3) % 1), sz = (6 - ph * 5) * s;
+      ctx.fillRect(cx - standW / 2 - 6 * s - ph * 40 * s, bottom - 4 * s - ph * 10 * s - sz, sz, sz);
     }
   }
-  ctx.fillStyle = 'rgba(255,90,79,0.55)';                                             // blush
-  ctx.fillRect(cx + w * 0.12, eyeY + eye * 0.9, 5 * s, 2.5 * s);
 
-  // feet
-  if (!player.ducking) {
-    const footW = 9 * s, footH = 6 * s;
-    let liftL = 0, liftR = 0;
-    if (!player.onGround) { liftL = 4 * s; liftR = 4 * s; }
-    else { liftL = Math.max(0, Math.sin(stepPhase) * 3 * s); liftR = Math.max(0, Math.sin(stepPhase + Math.PI) * 3 * s); }
-    ctx.fillStyle = OUTLINE;
-    ctx.fillRect(cx - w * 0.3, bottom - footH - liftL, footW, footH);
-    ctx.fillRect(cx + w * 0.3 - footW, bottom - footH - liftR, footW, footH);
+  if (o.ducking) { drawMascotDuck(cx, bottom, t); return; }
+
+  // body (leaning forward, pivoting on the feet line)
+  const w = standW * (1 - squish * 0.15);
+  const h = (PLAYER_STAND_H - FOOT_GAP) * s * (1 + squish * 0.12) - squish * 4 * s;
+  ctx.save();
+  ctx.translate(cx, bottom - FOOT_GAP * s - bounce);
+  ctx.rotate(MASCOT_LEAN);
+  drawMascotBody(w, h, t, o.onGround ? 0 : -6 * s, 0.5);
+  ctx.restore();
+
+  // feet: wide stride on the street, tucked together in the air
+  const footW = 9 * s, footH = 6 * s;
+  ctx.fillStyle = OUTLINE;
+  if (o.onGround) {
+    const stride = 7 * s;
+    ctx.fillRect(cx - footW / 2 + Math.sin(run) * stride, bottom - footH - Math.max(0, Math.cos(run)) * 4 * s, footW, footH);
+    ctx.fillRect(cx - footW / 2 - Math.sin(run) * stride, bottom - footH - Math.max(0, -Math.cos(run)) * 4 * s, footW, footH);
   } else {
-    // slide streaks
-    ctx.fillStyle = 'rgba(127,240,255,0.8)';
-    for (let i = 0; i < 3; i++) ctx.fillRect(left - (10 + i * 7) * s, top + (6 + i * 6) * s, (8 + i * 4) * s, 2 * s);
+    ctx.fillRect(cx - footW / 2 - 5 * s, bottom - footH - 1 * s, footW, footH);
+    ctx.fillRect(cx - footW / 2 + 4 * s, bottom - footH - 2 * s, footW, footH);
   }
+}
+
+// Body, headband, tail and eyes, drawn with its base centred on the current origin.
+// tailLift raises the tail (airborne); eyeY is the eye line as a fraction of the height.
+function drawMascotBody(w, h, t, tailLift, eyeY) {
+  const s = SCALE;
+  const flap = Math.sin(t * 22) * 3 * s + tailLift;
+  ctx.fillStyle = PAL.tomato; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 + 2 * s, -h * 0.8);
+  ctx.lineTo(-w / 2 - 16 * s, -h * 0.82 + flap);
+  ctx.lineTo(-w / 2 - 14 * s, -h * 0.68 + flap);
+  ctx.lineTo(-w / 2 + 2 * s, -h * 0.66);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffb84d';
+  roundRectPath(ctx, -w / 2, -h, w, h, 8 * s); ctx.fill();
+  const bandY = -h * 0.82;
+  ctx.fillStyle = PAL.tomato; ctx.fillRect(-w / 2, bandY, w, 6 * s);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(-3 * s, bandY + 1 * s, 6 * s, 4 * s);
+  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 2 * s;
+  roundRectPath(ctx, -w / 2, -h, w, h, 8 * s); ctx.stroke();
+  const eye = Math.max(4, 6 * s), ey = -h * eyeY;
+  for (const ex of [-w * 0.08, w * 0.26]) {
+    ctx.fillStyle = '#fff'; ctx.fillRect(ex - eye / 2, ey - eye / 2, eye, eye);
+    ctx.fillStyle = '#111'; ctx.fillRect(ex, ey - eye * 0.25, eye * 0.5, eye * 0.5);
+  }
+}
+
+// Duck / fast-fall: the same body squashed flat into a slide, with streaks trailing behind.
+function drawMascotDuck(cx, bottom, t) {
+  const s = SCALE, w = PLAYER_DUCK_W * s, h = PLAYER_DUCK_H * s;
+  ctx.fillStyle = 'rgba(127,240,255,0.8)';
+  for (let i = 0; i < 3; i++) ctx.fillRect(cx - w / 2 - (10 + i * 7) * s, bottom - h + (6 + i * 6) * s, (8 + i * 4) * s, 2 * s);
+  ctx.save();
+  ctx.translate(cx, bottom);
+  drawMascotBody(w, h, t, 2 * s, 0.38);
+  ctx.restore();
+}
+
+function drawPlayer(t) {
+  drawMascot(runnerX(), GROUND, player.y, t, player);
 }
 
 // ---------------------------------------------------------------------

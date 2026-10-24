@@ -93,49 +93,10 @@ function drawLogoGlint(tc, word, cx, top, p) {
   drawBaked(sc, cx, top, 1, true);
 }
 
-// The runner sprinting in place, with motion streaks and kicked-up dust.
+// The runner sprinting in place, exactly as it runs in-game.
+// t is absolute time so the stride carries on unbroken into the countdown glide.
 function drawTitleMascot(cx, groundY, t) {
-  const s = SCALE;
-  const run = t * 14;
-  const bounce = Math.abs(Math.sin(run)) * 4 * s;
-  const w = 34 * s, h = 38 * s;
-  const top = groundY - h - 4 * s - bounce;
-  const left = cx - w / 2;
-  ctx.fillStyle = 'rgba(5,11,30,0.5)';
-  ctx.beginPath(); ctx.ellipse(cx, groundY + 1 * s, (22 - bounce / s) * s, 4 * s, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = PAL.aqua;
-  for (let i = 0; i < 3; i++) {
-    const len = (16 + 10 * i + Math.sin(run + i) * 6) * s;
-    ctx.fillRect(left - 8 * s - len, top + (10 + i * 9) * s, len, Math.max(1, 3 * s));
-  }
-  ctx.fillStyle = 'rgba(255,243,214,0.85)';
-  for (let i = 0; i < 3; i++) {
-    const ph = ((t * 2.2 + i / 3) % 1), sz = (6 - ph * 5) * s;
-    ctx.fillRect(left - 6 * s - ph * 40 * s, groundY - 4 * s - ph * 10 * s - sz, sz, sz);
-  }
-  ctx.save();
-  ctx.translate(cx, groundY - 4 * s - bounce);
-  ctx.rotate(0.12);
-  // headband tails
-  const flap = Math.sin(t * 22) * 3 * s;
-  ctx.fillStyle = PAL.tomato; ctx.strokeStyle = PAL.navy; ctx.lineWidth = 2 * s; ctx.lineJoin = 'round';
-  ctx.beginPath(); ctx.moveTo(-w / 2 + 2 * s, -h * 0.8); ctx.lineTo(-w / 2 - 16 * s, -h * 0.82 + flap); ctx.lineTo(-w / 2 - 14 * s, -h * 0.68 + flap); ctx.lineTo(-w / 2 + 2 * s, -h * 0.66); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#ffb84d';
-  roundRectPath(ctx, -w / 2, -h, w, h, 8 * s); ctx.fill();
-  ctx.fillStyle = PAL.tomato; ctx.fillRect(-w / 2, -h * 0.82, w, 6 * s);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(-3 * s, -h * 0.82 + 1 * s, 6 * s, 4 * s);
-  ctx.strokeStyle = '#7a4a00'; ctx.lineWidth = 2 * s;
-  ctx.strokeStyle = PAL.navy; roundRectPath(ctx, -w / 2, -h, w, h, 8 * s); ctx.stroke();
-  const eye = Math.max(4, 6 * s);
-  for (const ex of [-w * 0.08, w * 0.26]) {
-    ctx.fillStyle = '#fff'; ctx.fillRect(ex - eye / 2, -h * 0.5 - eye / 2, eye, eye);
-    ctx.fillStyle = '#111'; ctx.fillRect(ex, -h * 0.5 - eye * 0.25, eye * 0.5, eye * 0.5);
-  }
-  ctx.restore();
-  const footW = 9 * s, footH = 6 * s, stride = 7 * s;
-  ctx.fillStyle = PAL.navy;
-  ctx.fillRect(cx - footW / 2 + Math.sin(run) * stride, groundY - footH - Math.max(0, Math.cos(run)) * 4 * s, footW, footH);
-  ctx.fillRect(cx - footW / 2 - Math.sin(run) * stride, groundY - footH - Math.max(0, -Math.cos(run)) * 4 * s, footW, footH);
+  drawMascot(cx, groundY, 0, t, { onGround: true, ducking: false, squish: 0 });
 }
 
 const TITLE_INTRO_DONE = 1.2; // seconds until the intro has fully settled
@@ -179,7 +140,7 @@ function drawStartMenu() {
   const logoBottom = logoTop + 16.3 * u;
   const subY = logoBottom + 16 * S;
   // lower stack sits above the road so the mascot can run on it, exactly like a run
-  const roadTop = horizonY(), mascotGround = GROUND - 3 * S;
+  const roadTop = horizonY();
   const footY = roadTop - 34 * S;
   const btnH = 38 * S, btnY = footY - 16 * S - btnH;
   const c3 = btnY - 18 * S, c2 = c3 - 17 * S, c1 = c2 - 17 * S;
@@ -206,7 +167,7 @@ function drawStartMenu() {
   ctx.fillStyle = PAL.ink; ctx.fillRect(-20, -20, W + 40, PH + 40); // covers edges during the slam shake
   drawWorld(now / 1000);
   drawTitleVeil(subY, tapY, c1, roadTop);
-  drawTitleMascot(W / 2, mascotGround, t);
+  drawTitleMascot(W / 2, GROUND, now / 1000);
 
   // speed lines (the "rush")
   if (Math.random() < dt * 12) {
